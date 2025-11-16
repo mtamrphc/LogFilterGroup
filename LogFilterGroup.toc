@@ -1,0 +1,10 @@
+## Interface: 11200
+## Title: LogFilterGroup
+## Notes: Organizes LFG/LFM and profession messages from chat
+## Author: YourName
+## Version: 1.0
+## SavedVariables: LogFilterGroupDB
+
+Core.lua
+Parser.lua
+UI.lua
