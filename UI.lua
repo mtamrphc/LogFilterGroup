@@ -2,12 +2,28 @@
 
 local FRAME_WIDTH = 500
 local FRAME_HEIGHT = 400
-local ROW_HEIGHT = 30
+local ROW_HEIGHT = 30  -- Single line per row (WoW 1.12 doesn't support word wrap on FontStrings)
 local ROWS_VISIBLE = 10
 
 -- Helper function to escape pattern characters for literal search
 local function EscapePattern(str)
     return string.gsub(str, "([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+end
+
+-- Helper function to truncate message if it's too long and add '...' if truncated
+-- Returns: displayText, isTruncated
+local function TruncateMessage(message, maxWidth)
+    -- Approximate character count based on width
+    -- GameFontNormalSmall is roughly 6-7 pixels per character
+    local maxChars = math.floor(maxWidth / 7)
+
+    if string.len(message) <= maxChars then
+        return message, false
+    end
+
+    -- Truncate and add ellipsis
+    local truncated = string.sub(message, 1, maxChars - 3) .. "..."
+    return truncated, true
 end
 
 -- Helper function to evaluate a simple expression (no parentheses)
@@ -216,7 +232,7 @@ function LogFilterGroup:CreateFrame()
     frame:SetBackdropBorderColor(0.2, 0.2, 0.2, 1)
     frame:SetMovable(true)
     frame:SetResizable(true)
-    frame:SetMinResize(450, 350)
+    frame:SetMinResize(300, 350)
     frame:SetMaxResize(1000, 800)
     frame:EnableMouse(true)
     frame:SetClampedToScreen(true)
@@ -224,7 +240,7 @@ function LogFilterGroup:CreateFrame()
     frame:SetScript("OnDragStart", function() this:StartMoving() end)
     frame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
     frame:Hide()
-    
+
     -- Title
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", frame, "TOP", 0, -10)
@@ -234,11 +250,24 @@ function LogFilterGroup:CreateFrame()
     local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
 
-    -- Clear icon button (next to close button)
+    -- Minimize button
+    local minimizeButton = CreateFrame("Button", nil, frame)
+    minimizeButton:SetWidth(16)
+    minimizeButton:SetHeight(16)
+    minimizeButton:SetPoint("RIGHT", closeButton, "LEFT", -2, 0)
+    minimizeButton:SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up")
+    minimizeButton:SetPushedTexture("Interface\\Buttons\\UI-MinusButton-Down")
+    minimizeButton:SetHighlightTexture("Interface\\Buttons\\UI-PlusButton-Hilight")
+    minimizeButton:SetScript("OnClick", function()
+        LogFilterGroup:MinimizeMainWindow()
+    end)
+    frame.minimizeButton = minimizeButton
+
+    -- Clear icon button (next to minimize button)
     local clearIconButton = CreateFrame("Button", nil, frame)
     clearIconButton:SetWidth(16)
     clearIconButton:SetHeight(16)
-    clearIconButton:SetPoint("RIGHT", closeButton, "LEFT", -5, 0)
+    clearIconButton:SetPoint("RIGHT", minimizeButton, "LEFT", -2, 0)
     clearIconButton:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
     clearIconButton:SetPushedTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Down")
     clearIconButton:SetHighlightTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
@@ -338,12 +367,24 @@ function LogFilterGroup:CreateFrame()
 
     separateButton:SetScript("OnClick", function()
         local parentFrame = this:GetParent()
-        if parentFrame.currentTab == "lfm" then
+        local tab = parentFrame.currentTab
+
+        -- Check if we can pop out (need at least 2 tabs visible)
+        if LogFilterGroup:CountVisibleTabs() <= 1 then
+            DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup: Cannot pop out the last remaining tab.")
+            return
+        end
+
+        -- Mark tab as popped out
+        LogFilterGroup.poppedOutTabs[tab] = true
+
+        -- Create and show the separate window
+        if tab == "lfm" then
             if not LogFilterGroupLFMWindow then
                 LogFilterGroup:CreateSeparateWindow("lfm")
             end
             LogFilterGroupLFMWindow:Show()
-        elseif parentFrame.currentTab == "lfg" then
+        elseif tab == "lfg" then
             if not LogFilterGroupLFGWindow then
                 LogFilterGroup:CreateSeparateWindow("lfg")
             end
@@ -354,19 +395,24 @@ function LogFilterGroup:CreateFrame()
             end
             LogFilterGroupProfessionWindow:Show()
         end
+
+        -- Switch to first available tab and update display
+        LogFilterGroup:ShowTab(tab)
+        LogFilterGroup:UpdateTabVisibility()
     end)
     frame.separateButton = separateButton
     
     -- Filter label
     local filterLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    filterLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 15, -60)
+    filterLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -55)
     filterLabel:SetText("Filter:")
+    frame.filterLabel = filterLabel
 
     -- LFM/LFG Filter input box
     local filterInputLFM = CreateFrame("EditBox", "LogFilterGroupFilterInputLFM", frame)
-    filterInputLFM:SetWidth(280)
     filterInputLFM:SetHeight(20)
-    filterInputLFM:SetPoint("LEFT", filterLabel, "RIGHT", 5, 0)
+    filterInputLFM:SetPoint("LEFT", filterLabel, "RIGHT", 3, 0)
+    filterInputLFM:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     filterInputLFM:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -390,9 +436,9 @@ function LogFilterGroup:CreateFrame()
 
     -- Profession Filter input box
     local filterInputProfession = CreateFrame("EditBox", "LogFilterGroupFilterInputProfession", frame)
-    filterInputProfession:SetWidth(280)
     filterInputProfession:SetHeight(20)
-    filterInputProfession:SetPoint("LEFT", filterLabel, "RIGHT", 5, 0)
+    filterInputProfession:SetPoint("LEFT", filterLabel, "RIGHT", 3, 0)
+    filterInputProfession:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     filterInputProfession:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -416,14 +462,15 @@ function LogFilterGroup:CreateFrame()
 
     -- Filter help text
     local filterHelp = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    filterHelp:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -5)
-    filterHelp:SetText("|cffaaaaaa(Use AND/OR with (): \"(DPS AND BRD) OR (TANK AND SFK)\")|r")
+    filterHelp:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -2)
+    filterHelp:SetText("|cffaaaaaa(You can use 1 and/or statement)|r")
+    frame.filterHelp = filterHelp
 
     -- Auto-send whisper checkbox
     local autoSendCheckbox = CreateFrame("CheckButton", "LogFilterGroupAutoSendCheckbox", frame, "UICheckButtonTemplate")
     autoSendCheckbox:SetWidth(20)
     autoSendCheckbox:SetHeight(20)
-    autoSendCheckbox:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -25)
+    autoSendCheckbox:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -18)
     autoSendCheckbox:SetScript("OnClick", function()
         LogFilterGroup.autoSendWhisper = this:GetChecked()
         LogFilterGroup:SaveSettings()
@@ -437,9 +484,9 @@ function LogFilterGroup:CreateFrame()
 
     -- LFM Whisper message input box
     local whisperMsgInputLFM = CreateFrame("EditBox", "LogFilterGroupWhisperMsgInputLFM", frame)
-    whisperMsgInputLFM:SetWidth(180)
     whisperMsgInputLFM:SetHeight(20)
-    whisperMsgInputLFM:SetPoint("LEFT", autoSendLabel, "RIGHT", 10, 0)
+    whisperMsgInputLFM:SetPoint("LEFT", autoSendLabel, "RIGHT", 5, 0)
+    whisperMsgInputLFM:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     whisperMsgInputLFM:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -462,9 +509,9 @@ function LogFilterGroup:CreateFrame()
 
     -- Profession Whisper message input box
     local whisperMsgInputProf = CreateFrame("EditBox", "LogFilterGroupWhisperMsgInputProf", frame)
-    whisperMsgInputProf:SetWidth(180)
     whisperMsgInputProf:SetHeight(20)
-    whisperMsgInputProf:SetPoint("LEFT", autoSendLabel, "RIGHT", 10, 0)
+    whisperMsgInputProf:SetPoint("LEFT", autoSendLabel, "RIGHT", 5, 0)
+    whisperMsgInputProf:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     whisperMsgInputProf:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -487,8 +534,8 @@ function LogFilterGroup:CreateFrame()
 
     -- Scroll frame
     local scrollFrame = CreateFrame("ScrollFrame", "LogFilterGroupScrollFrame", frame, "FauxScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 15, -155)
-    scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -35, 35)
+    scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -115)
+    scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
     scrollFrame:SetScript("OnVerticalScroll", function()
         FauxScrollFrame_OnVerticalScroll(ROW_HEIGHT, function() LogFilterGroup:UpdateDisplay() end)
     end)
@@ -513,40 +560,71 @@ function LogFilterGroup:CreateFrame()
 
         -- Sender name
         row.sender = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.sender:SetPoint("TOPLEFT", row, "TOPLEFT", 5, -5)
+        row.sender:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -5)
         row.sender:SetJustifyH("LEFT")
-        row.sender:SetWidth(100)
+        row.sender:SetWidth(80)
 
         -- Message text
         row.message = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.message:SetPoint("TOPLEFT", row, "TOPLEFT", 110, -5)
-        row.message:SetPoint("RIGHT", row, "RIGHT", -150, 0)
+        row.message:SetPoint("TOPLEFT", row, "TOPLEFT", 85, -5)
+        row.message:SetPoint("RIGHT", row, "RIGHT", -170, 0)  -- Adjusted for two buttons
         row.message:SetJustifyH("LEFT")
 
         -- Time ago
         row.time = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -75, -5)
+        row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -108, -5)  -- Adjusted for two buttons
         row.time:SetJustifyH("RIGHT")
 
-        -- Action button (Whisper or Invite depending on tab)
-        row.actionButton = CreateFrame("Button", nil, row)
-        row.actionButton:SetWidth(60)
-        row.actionButton:SetHeight(22)
-        row.actionButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -5, -5)
-        row.actionButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
-        row.actionButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
-        row.actionButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
-        row.actionButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
-        row.actionButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
-        row.actionButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        -- Invite button
+        row.inviteButton = CreateFrame("Button", nil, row)
+        row.inviteButton:SetWidth(50)
+        row.inviteButton:SetHeight(22)
+        row.inviteButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -5)
+        row.inviteButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        row.inviteButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        row.inviteButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        row.inviteButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.inviteButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.inviteButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
 
-        row.actionButtonText = row.actionButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.actionButtonText:SetPoint("CENTER", row.actionButton, "CENTER", 0, 0)
+        row.inviteButtonText = row.inviteButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        row.inviteButtonText:SetPoint("CENTER", row.inviteButton, "CENTER", 0, 0)
+        row.inviteButtonText:SetText("Invite")
 
-        -- Make row hoverable
+        row.inviteButton:SetScript("OnClick", function()
+            if this:GetParent().senderName then
+                InviteByName(this:GetParent().senderName)
+            end
+        end)
+
+        -- Whisper button (formerly actionButton)
+        row.whisperButton = CreateFrame("Button", nil, row)
+        row.whisperButton:SetWidth(50)
+        row.whisperButton:SetHeight(22)
+        row.whisperButton:SetPoint("TOPRIGHT", row.inviteButton, "TOPLEFT", -2, 0)
+        row.whisperButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        row.whisperButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        row.whisperButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        row.whisperButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.whisperButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.whisperButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        row.whisperButtonText = row.whisperButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        row.whisperButtonText:SetPoint("CENTER", row.whisperButton, "CENTER", 0, 0)
+        row.whisperButtonText:SetText("Whisper")
+
+        -- Make row hoverable with tooltip
         row:EnableMouse(true)
         row:SetScript("OnEnter", function()
             this.bg:SetTexture(0.2, 0.2, 0.5, 0.5)
+            -- Show tooltip when message is truncated or window is narrow
+            local frameWidth = frame:GetWidth()
+            if this.fullMessage and (this.isTruncated or frameWidth <= 350) then
+                GameTooltip:SetOwner(this, "ANCHOR_CURSOR")
+                GameTooltip:SetText(this.senderName, 0, 1, 0, 1, true)
+                GameTooltip:AddLine(this.fullMessage, 1, 1, 1, true)
+                GameTooltip:Show()
+            end
         end)
         row:SetScript("OnLeave", function()
             if math.mod(i, 2) == 0 then
@@ -554,6 +632,7 @@ function LogFilterGroup:CreateFrame()
             else
                 this.bg:SetTexture(0, 0, 0, 0.1)
             end
+            GameTooltip:Hide()
         end)
 
         row:Hide()
@@ -562,7 +641,7 @@ function LogFilterGroup:CreateFrame()
 
     -- Status text
     local statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    statusText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 20)
+    statusText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 8)
     statusText:SetText("Monitoring chat for messages...")
     frame.statusText = statusText
 
@@ -628,10 +707,86 @@ function LogFilterGroup:CreateFrame()
     end)
 end
 
+-- Helper function to count visible (non-popped-out) tabs
+function LogFilterGroup:CountVisibleTabs()
+    local count = 0
+    if not self.poppedOutTabs.lfm then count = count + 1 end
+    if not self.poppedOutTabs.lfg then count = count + 1 end
+    if not self.poppedOutTabs.profession then count = count + 1 end
+    return count
+end
+
+-- Helper function to update tab visibility based on pop-out state
+function LogFilterGroup:UpdateTabVisibility()
+    local frame = LogFilterGroupFrame
+    if not frame then return end
+
+    -- Show/hide tabs based on pop-out state
+    if self.poppedOutTabs.lfm then
+        frame.lfmTab:Hide()
+    else
+        frame.lfmTab:Show()
+    end
+
+    if self.poppedOutTabs.lfg then
+        frame.lfgTab:Hide()
+    else
+        frame.lfgTab:Show()
+    end
+
+    if self.poppedOutTabs.profession then
+        frame.professionTab:Hide()
+    else
+        frame.professionTab:Show()
+    end
+
+    -- Reposition visible tabs
+    local lastTab = nil
+    if not self.poppedOutTabs.lfm then
+        frame.lfmTab:ClearAllPoints()
+        frame.lfmTab:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -28)
+        lastTab = frame.lfmTab
+    end
+
+    if not self.poppedOutTabs.lfg then
+        frame.lfgTab:ClearAllPoints()
+        if lastTab then
+            frame.lfgTab:SetPoint("LEFT", lastTab, "RIGHT", 2, 0)
+        else
+            frame.lfgTab:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -28)
+        end
+        lastTab = frame.lfgTab
+    end
+
+    if not self.poppedOutTabs.profession then
+        frame.professionTab:ClearAllPoints()
+        if lastTab then
+            frame.professionTab:SetPoint("LEFT", lastTab, "RIGHT", 2, 0)
+        else
+            frame.professionTab:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -28)
+        end
+        lastTab = frame.professionTab
+    end
+end
+
 -- Show a specific tab
 function LogFilterGroup:ShowTab(tab)
     local frame = LogFilterGroupFrame
     if not frame then return end
+
+    -- If this tab is popped out, switch to first available non-popped-out tab
+    if self.poppedOutTabs[tab] then
+        if not self.poppedOutTabs.lfm then
+            tab = "lfm"
+        elseif not self.poppedOutTabs.lfg then
+            tab = "lfg"
+        elseif not self.poppedOutTabs.profession then
+            tab = "profession"
+        else
+            -- All tabs are popped out, shouldn't happen but just in case
+            return
+        end
+    end
 
     frame.currentTab = tab
 
@@ -695,13 +850,16 @@ end
 -- Update the display
 function LogFilterGroup:UpdateDisplay()
     local frame = LogFilterGroupFrame
-    if not frame then 
-        return 
+    if not frame then
+        return
     end
-    
-    if not frame:IsVisible() then 
-        return 
+
+    if not frame:IsVisible() then
+        return
     end
+
+    -- Update tab visibility based on pop-out state
+    self:UpdateTabVisibility()
     
     -- Get filter text based on current tab
     local filterText = ""
@@ -760,51 +918,50 @@ function LogFilterGroup:UpdateDisplay()
         if i <= visibleRows and index <= numMessages then
             local data = messages[index]
             row.sender:SetText("|cff00ff00" .. data.sender .. "|r")
-            row.message:SetText(data.message)
+
+            -- Calculate available width for message text (window width - sender - time - buttons - margins)
+            local messageWidth = frame:GetWidth() - 85 - 170
+            local displayText, isTruncated = TruncateMessage(data.message, messageWidth)
+            row.message:SetText(displayText)
             row.time:SetText(self:GetTimeAgo(data.timestamp))
 
-            -- Store sender data on row
+            -- Store sender data and full message on row for tooltip
             row.senderName = data.sender
+            row.fullMessage = data.message
+            row.isTruncated = isTruncated
 
-            -- Configure action button based on current tab
-            if frame.currentTab == "lfg" then
-                -- Find Member tab: Invite button
-                row.actionButtonText:SetText("Invite")
-                row.actionButton:SetScript("OnClick", function()
-                    if this:GetParent().senderName then
-                        InviteByName(this:GetParent().senderName)
-                    end
-                end)
-            else
-                -- Find Group and Professions tabs: Whisper button
-                row.actionButtonText:SetText("Whisper")
-                row.actionButton:SetScript("OnClick", function()
-                    if this:GetParent().senderName then
-                        if LogFilterGroup.autoSendWhisper then
-                            -- Determine which message to use based on current tab
-                            local message = ""
-                            if frame.currentTab == "lfm" then
-                                message = LogFilterGroup.whisperMessageLFM
-                            else
-                                message = LogFilterGroup.whisperMessageProfession
-                            end
-
-                            if message ~= "" then
-                                -- Auto-send the prepared message
-                                SendChatMessage(message, "WHISPER", nil, this:GetParent().senderName)
-                            else
-                                -- Just prepare the chat window if message is empty
-                                ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
-                                ChatFrameEditBox:Show()
-                            end
+            -- Configure whisper button behavior
+            row.whisperButton:SetScript("OnClick", function()
+                if this:GetParent().senderName then
+                    if LogFilterGroup.autoSendWhisper then
+                        -- Determine which message to use based on current tab
+                        local message = ""
+                        if frame.currentTab == "lfm" then
+                            message = LogFilterGroup.whisperMessageLFM
+                        elseif frame.currentTab == "lfg" then
+                            -- For LFG tab, just prepare whisper (no auto-send)
+                            ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
+                            ChatFrameEditBox:Show()
+                            return
                         else
-                            -- Just prepare the chat window
+                            message = LogFilterGroup.whisperMessageProfession
+                        end
+
+                        if message ~= "" then
+                            -- Auto-send the prepared message
+                            SendChatMessage(message, "WHISPER", nil, this:GetParent().senderName)
+                        else
+                            -- Just prepare the chat window if message is empty
                             ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
                             ChatFrameEditBox:Show()
                         end
+                    else
+                        -- Just prepare the chat window
+                        ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
+                        ChatFrameEditBox:Show()
                     end
-                end)
-            end
+                end
+            end)
 
             row:Show()
         else
@@ -820,17 +977,22 @@ function LogFilterGroup:UpdateDisplay()
     end
 end
 
+-- Note: MinimizeMainWindow and RestoreMainWindow are now defined in MinimizeHelper.lua
+-- as unified functions that handle both main and separate windows
+
 -- Toggle frame visibility
 function LogFilterGroup:ToggleFrame()
     if not LogFilterGroupFrame then
         self:CreateFrame()
     end
-    
+
     if LogFilterGroupFrame:IsVisible() then
         LogFilterGroupFrame:Hide()
     else
         LogFilterGroupFrame:Show()
-        self:UpdateDisplay()
+        if not self.mainWindowMinimized then
+            self:UpdateDisplay()
+        end
     end
 end
 
@@ -890,7 +1052,7 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
     frame:SetBackdropBorderColor(0.2, 0.2, 0.2, 1)
     frame:SetMovable(true)
     frame:SetResizable(true)
-    frame:SetMinResize(450, 350)
+    frame:SetMinResize(300, 350)
     frame:SetMaxResize(1000, 800)
     frame:EnableMouse(true)
     frame:SetClampedToScreen(true)
@@ -899,22 +1061,60 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
     frame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
     frame:Hide()
 
-    frame.windowType = windowType
-    
     -- Title
     local titleText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleText:SetPoint("TOP", frame, "TOP", 0, -10)
     titleText:SetText(title)
-    
-    -- Close button
+
+    -- Store window type on frame for later reference
+    frame.windowType = windowType
+
+    -- Close button - dock the tab back into main window
     local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
+    closeButton:SetScript("OnClick", function()
+        -- Dock the tab back into main window
+        LogFilterGroup.poppedOutTabs[windowType] = nil
 
-    -- Clear icon button (next to close button)
+        -- Hide this separate window
+        frame:Hide()
+
+        -- Update main window tab visibility
+        if LogFilterGroupFrame then
+            LogFilterGroup:UpdateTabVisibility()
+            -- Switch to the tab we just docked back
+            LogFilterGroup:ShowTab(windowType)
+        end
+    end)
+
+    -- Minimize button
+    local minimizeButton = CreateFrame("Button", nil, frame)
+    minimizeButton:SetWidth(16)
+    minimizeButton:SetHeight(16)
+    minimizeButton:SetPoint("RIGHT", closeButton, "LEFT", -2, 0)
+    minimizeButton:SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up")
+    minimizeButton:SetPushedTexture("Interface\\Buttons\\UI-MinusButton-Down")
+    minimizeButton:SetHighlightTexture("Interface\\Buttons\\UI-PlusButton-Hilight")
+    minimizeButton:SetScript("OnClick", function()
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Minimize button clicked")
+        local parentFrame = this:GetParent()
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: parentFrame = " .. tostring(parentFrame))
+        if parentFrame then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG: parentFrame.windowType = " .. tostring(parentFrame.windowType))
+        end
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: LogFilterGroup = " .. tostring(LogFilterGroup))
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: LogFilterGroup.MinimizeSeparateWindow = " .. tostring(LogFilterGroup.MinimizeSeparateWindow))
+        if parentFrame and parentFrame.windowType then
+            LogFilterGroup:MinimizeSeparateWindow(parentFrame.windowType)
+        end
+    end)
+    frame.minimizeButton = minimizeButton
+
+    -- Clear icon button (next to minimize button)
     local clearIconButton = CreateFrame("Button", nil, frame)
     clearIconButton:SetWidth(16)
     clearIconButton:SetHeight(16)
-    clearIconButton:SetPoint("RIGHT", closeButton, "LEFT", -5, 0)
+    clearIconButton:SetPoint("RIGHT", minimizeButton, "LEFT", -2, 0)
     clearIconButton:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
     clearIconButton:SetPushedTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Down")
     clearIconButton:SetHighlightTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
@@ -935,14 +1135,15 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
 
     -- Filter label
     local filterLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    filterLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 15, -35)
+    filterLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -35)
     filterLabel:SetText("Filter:")
+    frame.filterLabel = filterLabel
 
     -- Filter input box
     local filterInput = CreateFrame("EditBox", frameName .. "FilterInput", frame)
-    filterInput:SetWidth(280)
     filterInput:SetHeight(20)
-    filterInput:SetPoint("LEFT", filterLabel, "RIGHT", 5, 0)
+    filterInput:SetPoint("LEFT", filterLabel, "RIGHT", 3, 0)
+    filterInput:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     filterInput:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -967,15 +1168,16 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
 
     -- Filter help text
     local filterHelp = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    filterHelp:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -5)
-    filterHelp:SetText("|cffaaaaaa(Use AND/OR with (): \"(DPS AND BRD) OR (TANK AND SFK)\")|r")
+    filterHelp:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -2)
+    filterHelp:SetText("|cffaaaaaa(You can use 1 and/or statement)|r")
+    frame.filterHelp = filterHelp
 
     -- Auto-send whisper checkbox (only for LFM and Profession windows)
     if windowType ~= "lfg" then
         local autoSendCheckbox = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
         autoSendCheckbox:SetWidth(20)
         autoSendCheckbox:SetHeight(20)
-        autoSendCheckbox:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -25)
+        autoSendCheckbox:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -18)
         autoSendCheckbox:SetScript("OnClick", function()
             LogFilterGroup.autoSendWhisper = this:GetChecked()
             LogFilterGroup:SaveSettings()
@@ -990,9 +1192,9 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
 
         -- Whisper message input box
         local whisperMsgInput = CreateFrame("EditBox", nil, frame)
-        whisperMsgInput:SetWidth(180)
         whisperMsgInput:SetHeight(20)
-        whisperMsgInput:SetPoint("LEFT", autoSendLabel, "RIGHT", 10, 0)
+        whisperMsgInput:SetPoint("LEFT", autoSendLabel, "RIGHT", 5, 0)
+        whisperMsgInput:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
         whisperMsgInput:SetBackdrop({
             bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
             edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1028,11 +1230,11 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
     -- Scroll frame
     local scrollFrame = CreateFrame("ScrollFrame", frameName .. "ScrollFrame", frame, "FauxScrollFrameTemplate")
     if windowType == "lfg" then
-        scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 15, -80)
+        scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -75)
     else
-        scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 15, -105)
+        scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -95)
     end
-    scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -35, 35)
+    scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
     scrollFrame:SetScript("OnVerticalScroll", function()
         FauxScrollFrame_OnVerticalScroll(ROW_HEIGHT, function() LogFilterGroup:UpdateSeparateWindow(windowType) end)
     end)
@@ -1055,41 +1257,72 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
         end
 
         row.sender = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.sender:SetPoint("TOPLEFT", row, "TOPLEFT", 5, -5)
+        row.sender:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -5)
         row.sender:SetJustifyH("LEFT")
-        row.sender:SetWidth(100)
+        row.sender:SetWidth(80)
 
         row.message = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.message:SetPoint("TOPLEFT", row, "TOPLEFT", 110, -5)
-        row.message:SetPoint("RIGHT", row, "RIGHT", -150, 0)
+        row.message:SetPoint("TOPLEFT", row, "TOPLEFT", 85, -5)
+        row.message:SetPoint("RIGHT", row, "RIGHT", -170, 0)  -- Adjusted for two buttons
         row.message:SetJustifyH("LEFT")
 
         row.time = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -75, -5)
+        row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -108, -5)  -- Adjusted for two buttons
         row.time:SetJustifyH("RIGHT")
 
-        -- Action button (Whisper or Invite depending on window type)
-        row.actionButton = CreateFrame("Button", nil, row)
-        row.actionButton:SetWidth(60)
-        row.actionButton:SetHeight(22)
-        row.actionButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -5, -5)
-        row.actionButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
-        row.actionButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
-        row.actionButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
-        row.actionButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
-        row.actionButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
-        row.actionButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        -- Invite button
+        row.inviteButton = CreateFrame("Button", nil, row)
+        row.inviteButton:SetWidth(50)
+        row.inviteButton:SetHeight(22)
+        row.inviteButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -5)
+        row.inviteButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        row.inviteButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        row.inviteButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        row.inviteButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.inviteButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.inviteButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
 
-        row.actionButtonText = row.actionButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.actionButtonText:SetPoint("CENTER", row.actionButton, "CENTER", 0, 0)
+        row.inviteButtonText = row.inviteButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        row.inviteButtonText:SetPoint("CENTER", row.inviteButton, "CENTER", 0, 0)
+        row.inviteButtonText:SetText("Invite")
+
+        row.inviteButton:SetScript("OnClick", function()
+            if this:GetParent().senderName then
+                InviteByName(this:GetParent().senderName)
+            end
+        end)
+
+        -- Whisper button
+        row.whisperButton = CreateFrame("Button", nil, row)
+        row.whisperButton:SetWidth(50)
+        row.whisperButton:SetHeight(22)
+        row.whisperButton:SetPoint("TOPRIGHT", row.inviteButton, "TOPLEFT", -2, 0)
+        row.whisperButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        row.whisperButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        row.whisperButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        row.whisperButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.whisperButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.whisperButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        row.whisperButtonText = row.whisperButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        row.whisperButtonText:SetPoint("CENTER", row.whisperButton, "CENTER", 0, 0)
+        row.whisperButtonText:SetText("Whisper")
 
         -- Store window type on row for later use
         row.windowType = windowType
 
-        -- Make row hoverable
+        -- Make row hoverable with tooltip
         row:EnableMouse(true)
         row:SetScript("OnEnter", function()
             this.bg:SetTexture(0.2, 0.2, 0.5, 0.5)
+            -- Show tooltip when message is truncated or window is narrow
+            local frameWidth = frame:GetWidth()
+            if this.fullMessage and (this.isTruncated or frameWidth <= 350) then
+                GameTooltip:SetOwner(this, "ANCHOR_CURSOR")
+                GameTooltip:SetText(this.senderName, 0, 1, 0, 1, true)
+                GameTooltip:AddLine(this.fullMessage, 1, 1, 1, true)
+                GameTooltip:Show()
+            end
         end)
         row:SetScript("OnLeave", function()
             if math.mod(i, 2) == 0 then
@@ -1097,15 +1330,16 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
             else
                 this.bg:SetTexture(0, 0, 0, 0.1)
             end
+            GameTooltip:Hide()
         end)
 
         row:Hide()
         frame.rows[i] = row
     end
-    
+
     -- Status text
     local statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    statusText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 20)
+    statusText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 8)
     statusText:SetText("Monitoring chat for messages...")
     frame.statusText = statusText
 
@@ -1223,51 +1457,50 @@ function LogFilterGroup:UpdateSeparateWindow(windowType)
         if i <= visibleRows and index <= numMessages then
             local data = messages[index]
             row.sender:SetText("|cff00ff00" .. data.sender .. "|r")
-            row.message:SetText(data.message)
+
+            -- Calculate available width for message text (window width - sender - time - buttons - margins)
+            local messageWidth = frame:GetWidth() - 85 - 170
+            local displayText, isTruncated = TruncateMessage(data.message, messageWidth)
+            row.message:SetText(displayText)
             row.time:SetText(self:GetTimeAgo(data.timestamp))
 
-            -- Store sender data on row
+            -- Store sender data and full message on row for tooltip
             row.senderName = data.sender
+            row.fullMessage = data.message
+            row.isTruncated = isTruncated
 
-            -- Configure action button based on window type
-            if windowType == "lfg" then
-                -- Find Member window: Invite button
-                row.actionButtonText:SetText("Invite")
-                row.actionButton:SetScript("OnClick", function()
-                    if this:GetParent().senderName then
-                        InviteByName(this:GetParent().senderName)
-                    end
-                end)
-            else
-                -- Find Group and Professions windows: Whisper button
-                row.actionButtonText:SetText("Whisper")
-                row.actionButton:SetScript("OnClick", function()
-                    if this:GetParent().senderName then
-                        if LogFilterGroup.autoSendWhisper then
-                            -- Determine which message to use based on window type
-                            local message = ""
-                            if windowType == "lfm" then
-                                message = LogFilterGroup.whisperMessageLFM
-                            else
-                                message = LogFilterGroup.whisperMessageProfession
-                            end
-
-                            if message ~= "" then
-                                -- Auto-send the prepared message
-                                SendChatMessage(message, "WHISPER", nil, this:GetParent().senderName)
-                            else
-                                -- Just prepare the chat window if message is empty
-                                ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
-                                ChatFrameEditBox:Show()
-                            end
+            -- Configure whisper button behavior
+            row.whisperButton:SetScript("OnClick", function()
+                if this:GetParent().senderName then
+                    if LogFilterGroup.autoSendWhisper then
+                        -- Determine which message to use based on window type
+                        local message = ""
+                        if windowType == "lfm" then
+                            message = LogFilterGroup.whisperMessageLFM
+                        elseif windowType == "lfg" then
+                            -- For LFG window, just prepare whisper (no auto-send)
+                            ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
+                            ChatFrameEditBox:Show()
+                            return
                         else
-                            -- Just prepare the chat window
+                            message = LogFilterGroup.whisperMessageProfession
+                        end
+
+                        if message ~= "" then
+                            -- Auto-send the prepared message
+                            SendChatMessage(message, "WHISPER", nil, this:GetParent().senderName)
+                        else
+                            -- Just prepare the chat window if message is empty
                             ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
                             ChatFrameEditBox:Show()
                         end
+                    else
+                        -- Just prepare the chat window
+                        ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
+                        ChatFrameEditBox:Show()
                     end
-                end)
-            end
+                end
+            end)
 
             row:Show()
         else

@@ -1,9 +1,14 @@
 -- LogFilterGroup Core
+print("DEBUG: Core.lua is loading...")
 LogFilterGroup = {}
 LogFilterGroup.lfmMessages = {}  -- Looking for more (forming groups)
 LogFilterGroup.lfgMessages = {}  -- Looking for group (players seeking groups)
 LogFilterGroup.professionMessages = {}
 LogFilterGroup.lastUpdate = 0
+LogFilterGroup.mainWindowMinimized = false
+LogFilterGroup.mainWindowMinimizedTab = nil  -- Track which tab was active when main window minimized
+LogFilterGroup.poppedOutTabs = {}  -- Track which tabs are popped out (not persisted across sessions)
+print("DEBUG: Core.lua basic initialization done")
 
 -- Database defaults
 local defaults = {
@@ -101,6 +106,16 @@ function LogFilterGroup:AddLFMMessage(sender, message)
     }
     self:SaveData()
 
+    -- Restore main window if minimized and this was the active tab
+    if self.mainWindowMinimized and self.mainWindowMinimizedTab == "lfm" and LogFilterGroupFrame then
+        self:RestoreMainWindow()
+    end
+
+    -- Don't auto-restore minimized separate windows
+    -- if LogFilterGroupLFMWindow and LogFilterGroupLFMWindow.isMinimized then
+    --     self:RestoreSeparateWindow("lfm")
+    -- end
+
     if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
         self:UpdateDisplay()
     end
@@ -119,6 +134,16 @@ function LogFilterGroup:AddLFGMessage(sender, message)
     }
     self:SaveData()
 
+    -- Restore main window if minimized and this was the active tab
+    if self.mainWindowMinimized and self.mainWindowMinimizedTab == "lfg" and LogFilterGroupFrame then
+        self:RestoreMainWindow()
+    end
+
+    -- Don't auto-restore minimized separate windows
+    -- if LogFilterGroupLFGWindow and LogFilterGroupLFGWindow.isMinimized then
+    --     self:RestoreSeparateWindow("lfg")
+    -- end
+
     if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
         self:UpdateDisplay()
     end
@@ -136,11 +161,21 @@ function LogFilterGroup:AddProfessionMessage(sender, message)
         timestamp = time()
     }
     self:SaveData()
-    
+
+    -- Restore main window if minimized and this was the active tab
+    if self.mainWindowMinimized and self.mainWindowMinimizedTab == "profession" and LogFilterGroupFrame then
+        self:RestoreMainWindow()
+    end
+
+    -- Don't auto-restore minimized separate windows
+    -- if LogFilterGroupProfessionWindow and LogFilterGroupProfessionWindow.isMinimized then
+    --     self:RestoreSeparateWindow("profession")
+    -- end
+
     if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
         self:UpdateDisplay()
     end
-    
+
     -- Update separate window if open
     if LogFilterGroupProfessionWindow and LogFilterGroupProfessionWindow:IsVisible() then
         self:UpdateSeparateWindow("profession")
@@ -179,11 +214,13 @@ end
 -- Event frame
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
-eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
+eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")  -- All numbered channels (General, Trade, World, LocalDefense, etc.)
 eventFrame:RegisterEvent("CHAT_MSG_YELL")
 eventFrame:RegisterEvent("CHAT_MSG_SAY")
 eventFrame:RegisterEvent("CHAT_MSG_GUILD")
 eventFrame:RegisterEvent("CHAT_MSG_OFFICER")
+eventFrame:RegisterEvent("CHAT_MSG_PARTY")
+eventFrame:RegisterEvent("CHAT_MSG_RAID")
 eventFrame:RegisterEvent("PLAYER_LOGOUT")
 
 eventFrame:SetScript("OnEvent", function()
@@ -201,7 +238,7 @@ eventFrame:SetScript("OnEvent", function()
                 LogFilterGroup.lastCleanup = currentTime
             end
         end)
-    elseif event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" or event == "CHAT_MSG_GUILD" or event == "CHAT_MSG_OFFICER" then
+    elseif event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" or event == "CHAT_MSG_GUILD" or event == "CHAT_MSG_OFFICER" or event == "CHAT_MSG_PARTY" or event == "CHAT_MSG_RAID" then
         local message = arg1
         local sender = arg2
 
@@ -211,8 +248,8 @@ eventFrame:SetScript("OnEvent", function()
         end
 
         if message and sender then
-            -- Debug output
-            -- DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup: Checking message from " .. sender .. ": " .. message)
+            -- Debug output (uncomment to see all messages being parsed)
+            -- DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup [" .. event .. "]: Checking message from " .. sender .. ": " .. message)
             LogFilterGroup:ParseMessage(sender, message)
         end
     elseif event == "PLAYER_LOGOUT" then

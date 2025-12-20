@@ -7,4 +7,5 @@
 
 Core.lua
 Parser.lua
+MinimizeHelper.lua
 UI.lua

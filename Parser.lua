@@ -1,4 +1,5 @@
 -- Message Parser for LogFilterGroup
+print("DEBUG: Parser.lua is loading...")
 
 -- LFM patterns (looking for more - groups seeking members)
 local lfmPatterns = {
