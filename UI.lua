@@ -567,19 +567,35 @@ function LogFilterGroup:CreateFrame()
         -- Message text
         row.message = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         row.message:SetPoint("TOPLEFT", row, "TOPLEFT", 85, -5)
-        row.message:SetPoint("RIGHT", row, "RIGHT", -170, 0)  -- Adjusted for two buttons
+        row.message:SetPoint("RIGHT", row, "RIGHT", -215, 0)  -- Adjusted for three buttons
         row.message:SetJustifyH("LEFT")
 
         -- Time ago
         row.time = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -108, -5)  -- Adjusted for two buttons
+        row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -152, -5)  -- Adjusted for three buttons
         row.time:SetJustifyH("RIGHT")
 
-        -- Invite button
+        -- Clear button (rightmost)
+        row.clearButton = CreateFrame("Button", nil, row)
+        row.clearButton:SetWidth(40)
+        row.clearButton:SetHeight(22)
+        row.clearButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -5)
+        row.clearButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        row.clearButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        row.clearButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        row.clearButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.clearButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.clearButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        row.clearButtonText = row.clearButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        row.clearButtonText:SetPoint("CENTER", row.clearButton, "CENTER", 0, 0)
+        row.clearButtonText:SetText("Clear")
+
+        -- Invite button (middle)
         row.inviteButton = CreateFrame("Button", nil, row)
         row.inviteButton:SetWidth(50)
         row.inviteButton:SetHeight(22)
-        row.inviteButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -5)
+        row.inviteButton:SetPoint("TOPRIGHT", row.clearButton, "TOPLEFT", -2, 0)
         row.inviteButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
         row.inviteButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
         row.inviteButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
@@ -597,7 +613,7 @@ function LogFilterGroup:CreateFrame()
             end
         end)
 
-        -- Whisper button (formerly actionButton)
+        -- Whisper button (leftmost)
         row.whisperButton = CreateFrame("Button", nil, row)
         row.whisperButton:SetWidth(50)
         row.whisperButton:SetHeight(22)
@@ -920,7 +936,7 @@ function LogFilterGroup:UpdateDisplay()
             row.sender:SetText("|cff00ff00" .. data.sender .. "|r")
 
             -- Calculate available width for message text (window width - sender - time - buttons - margins)
-            local messageWidth = frame:GetWidth() - 85 - 170
+            local messageWidth = frame:GetWidth() - 85 - 215
             local displayText, isTruncated = TruncateMessage(data.message, messageWidth)
             row.message:SetText(displayText)
             row.time:SetText(self:GetTimeAgo(data.timestamp))
@@ -959,6 +975,28 @@ function LogFilterGroup:UpdateDisplay()
                         -- Just prepare the chat window
                         ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
                         ChatFrameEditBox:Show()
+                    end
+                end
+            end)
+
+            -- Configure clear button behavior
+            row.clearButton:SetScript("OnClick", function()
+                local senderName = this:GetParent().senderName
+                if senderName then
+                    -- Determine which data table to clear from based on current tab
+                    local dataTable
+                    if frame.currentTab == "lfm" then
+                        dataTable = LogFilterGroup.lfmMessages
+                    elseif frame.currentTab == "lfg" then
+                        dataTable = LogFilterGroup.lfgMessages
+                    else
+                        dataTable = LogFilterGroup.professionMessages
+                    end
+
+                    -- Remove the entry
+                    if dataTable[senderName] then
+                        dataTable[senderName] = nil
+                        LogFilterGroup:UpdateDisplay()
                     end
                 end
             end)
@@ -1263,18 +1301,34 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
 
         row.message = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         row.message:SetPoint("TOPLEFT", row, "TOPLEFT", 85, -5)
-        row.message:SetPoint("RIGHT", row, "RIGHT", -170, 0)  -- Adjusted for two buttons
+        row.message:SetPoint("RIGHT", row, "RIGHT", -215, 0)  -- Adjusted for three buttons
         row.message:SetJustifyH("LEFT")
 
         row.time = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -108, -5)  -- Adjusted for two buttons
+        row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -152, -5)  -- Adjusted for three buttons
         row.time:SetJustifyH("RIGHT")
 
-        -- Invite button
+        -- Clear button (rightmost)
+        row.clearButton = CreateFrame("Button", nil, row)
+        row.clearButton:SetWidth(40)
+        row.clearButton:SetHeight(22)
+        row.clearButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -5)
+        row.clearButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        row.clearButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        row.clearButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        row.clearButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.clearButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        row.clearButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        row.clearButtonText = row.clearButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        row.clearButtonText:SetPoint("CENTER", row.clearButton, "CENTER", 0, 0)
+        row.clearButtonText:SetText("Clear")
+
+        -- Invite button (middle)
         row.inviteButton = CreateFrame("Button", nil, row)
         row.inviteButton:SetWidth(50)
         row.inviteButton:SetHeight(22)
-        row.inviteButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -5)
+        row.inviteButton:SetPoint("TOPRIGHT", row.clearButton, "TOPLEFT", -2, 0)
         row.inviteButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
         row.inviteButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
         row.inviteButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
@@ -1292,7 +1346,7 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
             end
         end)
 
-        -- Whisper button
+        -- Whisper button (leftmost)
         row.whisperButton = CreateFrame("Button", nil, row)
         row.whisperButton:SetWidth(50)
         row.whisperButton:SetHeight(22)
@@ -1459,7 +1513,7 @@ function LogFilterGroup:UpdateSeparateWindow(windowType)
             row.sender:SetText("|cff00ff00" .. data.sender .. "|r")
 
             -- Calculate available width for message text (window width - sender - time - buttons - margins)
-            local messageWidth = frame:GetWidth() - 85 - 170
+            local messageWidth = frame:GetWidth() - 85 - 215
             local displayText, isTruncated = TruncateMessage(data.message, messageWidth)
             row.message:SetText(displayText)
             row.time:SetText(self:GetTimeAgo(data.timestamp))
@@ -1498,6 +1552,28 @@ function LogFilterGroup:UpdateSeparateWindow(windowType)
                         -- Just prepare the chat window
                         ChatFrameEditBox:SetText("/w " .. this:GetParent().senderName .. " ")
                         ChatFrameEditBox:Show()
+                    end
+                end
+            end)
+
+            -- Configure clear button behavior
+            row.clearButton:SetScript("OnClick", function()
+                local senderName = this:GetParent().senderName
+                if senderName then
+                    -- Determine which data table to clear from based on window type
+                    local dataTable
+                    if windowType == "lfm" then
+                        dataTable = LogFilterGroup.lfmMessages
+                    elseif windowType == "lfg" then
+                        dataTable = LogFilterGroup.lfgMessages
+                    else
+                        dataTable = LogFilterGroup.professionMessages
+                    end
+
+                    -- Remove the entry
+                    if dataTable[senderName] then
+                        dataTable[senderName] = nil
+                        LogFilterGroup:UpdateSeparateWindow(windowType)
                     end
                 end
             end)

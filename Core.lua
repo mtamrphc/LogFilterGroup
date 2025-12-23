@@ -248,8 +248,10 @@ eventFrame:SetScript("OnEvent", function()
         end
 
         if message and sender then
-            -- Debug output (uncomment to see all messages being parsed)
-            -- DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup [" .. event .. "]: Checking message from " .. sender .. ": " .. message)
+            -- Debug output to help diagnose issues
+            if event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" then
+                DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup [" .. event .. "]: Checking message from " .. sender .. ": " .. message)
+            end
             LogFilterGroup:ParseMessage(sender, message)
         end
     elseif event == "PLAYER_LOGOUT" then
