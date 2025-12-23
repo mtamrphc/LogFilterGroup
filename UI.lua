@@ -208,6 +208,16 @@ local function MatchesFilter(message, filterText)
     return EvaluateWithPlaceholders(lowerFilter)
 end
 
+-- Helper function to check if a message should be excluded based on exclude filter
+local function MatchesExclude(message, excludeText)
+    if not excludeText or excludeText == "" then
+        return false  -- No exclude filter means don't exclude
+    end
+
+    -- Use same filter logic as MatchesFilter - if it matches the exclude text, return true (should be excluded)
+    return MatchesFilter(message, excludeText)
+end
+
 
 -- Create main frame
 function LogFilterGroup:CreateFrame()
@@ -466,11 +476,69 @@ function LogFilterGroup:CreateFrame()
     filterHelp:SetText("|cffaaaaaa(You can use 1 and/or statement)|r")
     frame.filterHelp = filterHelp
 
+    -- Exclude label
+    local excludeLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    excludeLabel:SetPoint("TOPLEFT", filterHelp, "BOTTOMLEFT", 0, -5)
+    excludeLabel:SetText("Exclude:")
+    frame.excludeLabel = excludeLabel
+
+    -- LFM/LFG Exclude input box
+    local excludeInputLFM = CreateFrame("EditBox", "LogFilterGroupExcludeInputLFM", frame)
+    excludeInputLFM:SetHeight(20)
+    excludeInputLFM:SetPoint("LEFT", excludeLabel, "RIGHT", 3, 0)
+    excludeInputLFM:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
+    excludeInputLFM:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    excludeInputLFM:SetBackdropColor(0, 0, 0, 0.8)
+    excludeInputLFM:SetFontObject(GameFontNormal)
+    excludeInputLFM:SetTextInsets(5, 5, 0, 0)
+    excludeInputLFM:SetAutoFocus(false)
+    excludeInputLFM:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+    excludeInputLFM:SetScript("OnEnterPressed", function() this:ClearFocus() end)
+    excludeInputLFM:SetScript("OnTextChanged", function()
+        LogFilterGroup.excludeTextLFM = this:GetText()
+        LogFilterGroup:SaveSettings()
+        LogFilterGroup:UpdateDisplay()
+    end)
+    frame.excludeInputLFM = excludeInputLFM
+
+    -- Profession Exclude input box
+    local excludeInputProfession = CreateFrame("EditBox", "LogFilterGroupExcludeInputProfession", frame)
+    excludeInputProfession:SetHeight(20)
+    excludeInputProfession:SetPoint("LEFT", excludeLabel, "RIGHT", 3, 0)
+    excludeInputProfession:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
+    excludeInputProfession:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    excludeInputProfession:SetBackdropColor(0, 0, 0, 0.8)
+    excludeInputProfession:SetFontObject(GameFontNormal)
+    excludeInputProfession:SetTextInsets(5, 5, 0, 0)
+    excludeInputProfession:SetAutoFocus(false)
+    excludeInputProfession:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+    excludeInputProfession:SetScript("OnEnterPressed", function() this:ClearFocus() end)
+    excludeInputProfession:SetScript("OnTextChanged", function()
+        LogFilterGroup.excludeTextProfession = this:GetText()
+        LogFilterGroup:SaveSettings()
+        LogFilterGroup:UpdateDisplay()
+    end)
+    frame.excludeInputProfession = excludeInputProfession
+
     -- Auto-send whisper checkbox
     local autoSendCheckbox = CreateFrame("CheckButton", "LogFilterGroupAutoSendCheckbox", frame, "UICheckButtonTemplate")
     autoSendCheckbox:SetWidth(20)
     autoSendCheckbox:SetHeight(20)
-    autoSendCheckbox:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -18)
+    autoSendCheckbox:SetPoint("TOPLEFT", excludeLabel, "BOTTOMLEFT", 0, -5)
     autoSendCheckbox:SetScript("OnClick", function()
         LogFilterGroup.autoSendWhisper = this:GetChecked()
         LogFilterGroup:SaveSettings()
@@ -708,6 +776,8 @@ function LogFilterGroup:CreateFrame()
     frame.whisperMsgInputProf:SetText(LogFilterGroup.whisperMessageProfession)
     frame.filterInputLFM:SetText(LogFilterGroup.filterTextLFM)
     frame.filterInputProfession:SetText(LogFilterGroup.filterTextProfession)
+    frame.excludeInputLFM:SetText(LogFilterGroup.excludeTextLFM)
+    frame.excludeInputProfession:SetText(LogFilterGroup.excludeTextProfession)
 
     LogFilterGroup:ShowTab("lfm")
 
@@ -820,6 +890,8 @@ function LogFilterGroup:ShowTab(tab)
         -- Show LFM filter and auto-send controls
         frame.filterInputLFM:Show()
         frame.filterInputProfession:Hide()
+        frame.excludeInputLFM:Show()
+        frame.excludeInputProfession:Hide()
         frame.autoSendCheckbox:Show()
         frame.autoSendLabel:Show()
         frame.whisperMsgInputLFM:Show()
@@ -837,6 +909,8 @@ function LogFilterGroup:ShowTab(tab)
         -- Show LFG filter, hide auto-send controls
         frame.filterInputLFM:Show()
         frame.filterInputProfession:Hide()
+        frame.excludeInputLFM:Show()
+        frame.excludeInputProfession:Hide()
         frame.autoSendCheckbox:Hide()
         frame.autoSendLabel:Hide()
         frame.whisperMsgInputLFM:Hide()
@@ -854,6 +928,8 @@ function LogFilterGroup:ShowTab(tab)
         -- Show Profession filter and auto-send controls
         frame.filterInputLFM:Hide()
         frame.filterInputProfession:Show()
+        frame.excludeInputLFM:Hide()
+        frame.excludeInputProfession:Show()
         frame.autoSendCheckbox:Show()
         frame.autoSendLabel:Show()
         frame.whisperMsgInputLFM:Hide()
@@ -879,13 +955,20 @@ function LogFilterGroup:UpdateDisplay()
     
     -- Get filter text based on current tab
     local filterText = ""
+    local excludeText = ""
     if frame.currentTab == "profession" then
         if frame.filterInputProfession then
             filterText = frame.filterInputProfession:GetText()
         end
+        if frame.excludeInputProfession then
+            excludeText = frame.excludeInputProfession:GetText()
+        end
     else
         if frame.filterInputLFM then
             filterText = frame.filterInputLFM:GetText()
+        end
+        if frame.excludeInputLFM then
+            excludeText = frame.excludeInputLFM:GetText()
         end
     end
 
@@ -900,8 +983,8 @@ function LogFilterGroup:UpdateDisplay()
     end
 
     for sender, data in pairs(sourceData) do
-        -- Apply filter
-        if MatchesFilter(data.message, filterText) then
+        -- Apply include filter and exclude filter
+        if MatchesFilter(data.message, filterText) and not MatchesExclude(data.message, excludeText) then
             table.insert(messages, {
                 sender = sender,
                 message = data.message,

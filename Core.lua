@@ -19,7 +19,9 @@ local defaults = {
     whisperMessageLFM = "inv",
     whisperMessageProfession = "How much?",
     filterTextLFM = "",
-    filterTextProfession = ""
+    filterTextProfession = "",
+    excludeTextLFM = "",
+    excludeTextProfession = ""
 }
 
 -- Initialize addon
@@ -40,6 +42,8 @@ function LogFilterGroup:Initialize()
     self.whisperMessageProfession = LogFilterGroupDB.whisperMessageProfession or "How much?"
     self.filterTextLFM = LogFilterGroupDB.filterTextLFM or ""
     self.filterTextProfession = LogFilterGroupDB.filterTextProfession or ""
+    self.excludeTextLFM = LogFilterGroupDB.excludeTextLFM or ""
+    self.excludeTextProfession = LogFilterGroupDB.excludeTextProfession or ""
 
     -- Save the cleared state
     self:SaveData()
@@ -196,6 +200,8 @@ function LogFilterGroup:SaveSettings()
     LogFilterGroupDB.whisperMessageProfession = self.whisperMessageProfession
     LogFilterGroupDB.filterTextLFM = self.filterTextLFM
     LogFilterGroupDB.filterTextProfession = self.filterTextProfession
+    LogFilterGroupDB.excludeTextLFM = self.excludeTextLFM
+    LogFilterGroupDB.excludeTextProfession = self.excludeTextProfession
 end
 
 -- Get time ago string

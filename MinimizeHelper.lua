@@ -67,6 +67,22 @@ function LogFilterGroup:MinimizeWindow(windowType)
         frame.filterInputProfession:Hide()
     end
 
+    -- Hide exclude inputs (main window has two, separate windows have one)
+    if frame.excludeInput then
+        frame.excludeInput:Hide()
+    end
+    if frame.excludeInputLFM then
+        frame.excludeInputLFM:Hide()
+    end
+    if frame.excludeInputProfession then
+        frame.excludeInputProfession:Hide()
+    end
+
+    -- Hide exclude label
+    if frame.excludeLabel then
+        frame.excludeLabel:Hide()
+    end
+
     -- Hide auto-send checkbox and related elements
     if frame.autoSendCheckbox then
         frame.autoSendCheckbox:Hide()
@@ -172,6 +188,16 @@ function LogFilterGroup:RestoreWindow(windowType)
         frame.filterInput:Show()
     end
 
+    -- Show exclude label
+    if frame.excludeLabel then
+        frame.excludeLabel:Show()
+    end
+
+    -- Show exclude inputs (main window has two, separate windows have one)
+    if frame.excludeInput then
+        frame.excludeInput:Show()
+    end
+
     -- Show separate button (main window only)
     if frame.separateButton then
         frame.separateButton:Show()
@@ -181,13 +207,16 @@ function LogFilterGroup:RestoreWindow(windowType)
     if windowType == "main" then
         if frame.currentTab == "profession" then
             frame.filterInputProfession:Show()
+            frame.excludeInputProfession:Show()
             frame.autoSendCheckbox:Show()
             frame.autoSendLabel:Show()
             frame.whisperMsgInputProf:Show()
         elseif frame.currentTab == "lfg" then
             frame.filterInputLFM:Show()
+            frame.excludeInputLFM:Show()
         else
             frame.filterInputLFM:Show()
+            frame.excludeInputLFM:Show()
             frame.autoSendCheckbox:Show()
             frame.autoSendLabel:Show()
             frame.whisperMsgInputLFM:Show()
