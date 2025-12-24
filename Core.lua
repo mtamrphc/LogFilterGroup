@@ -1,5 +1,4 @@
 -- LogFilterGroup Core
-print("DEBUG: Core.lua is loading...")
 LogFilterGroup = {}
 LogFilterGroup.lfmMessages = {}  -- Looking for more (forming groups)
 LogFilterGroup.lfgMessages = {}  -- Looking for group (players seeking groups)
@@ -8,7 +7,7 @@ LogFilterGroup.lastUpdate = 0
 LogFilterGroup.mainWindowMinimized = false
 LogFilterGroup.mainWindowMinimizedTab = nil  -- Track which tab was active when main window minimized
 LogFilterGroup.poppedOutTabs = {}  -- Track which tabs are popped out (not persisted across sessions)
-print("DEBUG: Core.lua basic initialization done")
+LogFilterGroup.debugMode = false  -- Debug mode off by default
 
 -- Database defaults
 local defaults = {
@@ -255,7 +254,7 @@ eventFrame:SetScript("OnEvent", function()
 
         if message and sender then
             -- Debug output to help diagnose issues
-            if event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" then
+            if LogFilterGroup.debugMode and (event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY") then
                 DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup [" .. event .. "]: Checking message from " .. sender .. ": " .. message)
             end
             LogFilterGroup:ParseMessage(sender, message)

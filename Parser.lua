@@ -1,5 +1,4 @@
 -- Message Parser for LogFilterGroup
-print("DEBUG: Parser.lua is loading...")
 
 -- LFM patterns (looking for more - groups seeking members)
 local lfmPatterns = {
@@ -72,8 +71,10 @@ function LogFilterGroup:ParseMessage(sender, message)
         return
     end
 
-    -- Temporary debug to see all messages being parsed
-    DEFAULT_CHAT_FRAME:AddMessage("DEBUG ParseMessage: '" .. message .. "' (lowercase: '" .. lowerMessage .. "')")
+    -- Debug output for all messages being parsed
+    if LogFilterGroup.debugMode then
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG ParseMessage: '" .. message .. "' (lowercase: '" .. lowerMessage .. "')")
+    end
 
     local isLFM = false
     local isLFG = false
@@ -135,15 +136,23 @@ function LogFilterGroup:ParseMessage(sender, message)
     -- Add to appropriate category (LFM takes priority, then LFG, then profession)
     if isLFM then
         self:AddLFMMessage(sender, message)
-        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as LFM from " .. sender)
+        if self.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as LFM from " .. sender)
+        end
     elseif isLFG then
         self:AddLFGMessage(sender, message)
-        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as LFG from " .. sender)
+        if self.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as LFG from " .. sender)
+        end
     elseif isProfession then
         self:AddProfessionMessage(sender, message)
-        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as Profession from " .. sender)
+        if self.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as Profession from " .. sender)
+        end
     else
-        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Message NOT categorized (no matching patterns)")
+        if self.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Message NOT categorized (no matching patterns)")
+        end
     end
 end
 

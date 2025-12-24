@@ -1,9 +1,10 @@
 -- Helper functions for minimize/restore windows (both main and separate)
-print("DEBUG: MinimizeHelper.lua is loading...")
 
 -- Unified minimize function that works for both main window and separate windows
 function LogFilterGroup:MinimizeWindow(windowType)
-    DEFAULT_CHAT_FRAME:AddMessage("DEBUG: MinimizeWindow called with windowType = " .. tostring(windowType))
+    if self.debugMode then
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: MinimizeWindow called with windowType = " .. tostring(windowType))
+    end
 
     local frame
     if windowType == "main" then
@@ -17,7 +18,9 @@ function LogFilterGroup:MinimizeWindow(windowType)
     end
 
     if not frame then
-        DEFAULT_CHAT_FRAME:AddMessage("DEBUG: frame is nil, returning")
+        if self.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG: frame is nil, returning")
+        end
         return
     end
 
@@ -270,5 +273,3 @@ end
 function LogFilterGroup:RestoreMainWindow()
     self:RestoreWindow("main")
 end
-
-print("DEBUG: MinimizeHelper.lua loaded successfully. MinimizeWindow = " .. tostring(LogFilterGroup.MinimizeWindow))
