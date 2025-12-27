@@ -1235,35 +1235,47 @@ function LogFilterGroup:UpdateLockState()
         frame.lockButton:SetPushedTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Down")
     end
 
-    -- Enable/disable filter inputs
+    -- Hide/show filter inputs and labels
     if locked then
-        frame.filterInput:EnableMouse(false)
-        frame.filterInput:EnableKeyboard(false)
-        frame.filterInput:SetTextColor(0.5, 0.5, 0.5, 1)
+        -- Hide all filter-related elements
+        frame.filterLabel:Hide()
+        frame.filterInput:Hide()
 
-        frame.excludeInput:EnableMouse(false)
-        frame.excludeInput:EnableKeyboard(false)
-        frame.excludeInput:SetTextColor(0.5, 0.5, 0.5, 1)
+        frame.excludeLabel:Hide()
+        frame.excludeInput:Hide()
 
-        frame.whisperMsgInput:EnableMouse(false)
-        frame.whisperMsgInput:EnableKeyboard(false)
-        frame.whisperMsgInput:SetTextColor(0.5, 0.5, 0.5, 1)
+        if frame.excludeHelp then
+            frame.excludeHelp:Hide()
+        end
 
-        frame.autoSendCheckbox:Disable()
+        frame.autoSendCheckbox:Hide()
+        frame.autoSendLabel:Hide()
+        frame.whisperMsgInput:Hide()
+
+        -- Expand scroll frame to use the full space
+        frame.scrollFrame:ClearAllPoints()
+        frame.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -55)
+        frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
     else
-        frame.filterInput:EnableMouse(true)
-        frame.filterInput:EnableKeyboard(true)
-        frame.filterInput:SetTextColor(1, 1, 1, 1)
+        -- Show all filter-related elements
+        frame.filterLabel:Show()
+        frame.filterInput:Show()
 
-        frame.excludeInput:EnableMouse(true)
-        frame.excludeInput:EnableKeyboard(true)
-        frame.excludeInput:SetTextColor(1, 1, 1, 1)
+        frame.excludeLabel:Show()
+        frame.excludeInput:Show()
 
-        frame.whisperMsgInput:EnableMouse(true)
-        frame.whisperMsgInput:EnableKeyboard(true)
-        frame.whisperMsgInput:SetTextColor(1, 1, 1, 1)
+        if frame.excludeHelp then
+            frame.excludeHelp:Show()
+        end
 
-        frame.autoSendCheckbox:Enable()
+        frame.autoSendCheckbox:Show()
+        frame.autoSendLabel:Show()
+        frame.whisperMsgInput:Show()
+
+        -- Restore scroll frame to normal position (below the auto-send checkbox)
+        frame.scrollFrame:ClearAllPoints()
+        frame.scrollFrame:SetPoint("TOPLEFT", frame.autoSendCheckbox, "BOTTOMLEFT", 8, -10)
+        frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
     end
 end
 
@@ -1295,8 +1307,88 @@ function LogFilterGroup:ShowTab(tabId)
     -- Update lock state
     self:UpdateLockState()
 
+    -- Stop flashing this tab since it's now active
+    self:StopFlashingTab(tabId)
+
     -- Update display
     self:UpdateDisplay()
+end
+
+-- Check if message passes filters and flash tab if it does
+function LogFilterGroup:CheckAndFlashTab(tabId, sender, message)
+    local tab = self:GetTab(tabId)
+    if not tab then return end
+
+    -- Check if message passes the include filter and exclude filter
+    local filterText = tab.filterText
+    local excludeText = tab.excludeText
+
+    -- Apply same filter logic as UpdateDisplay
+    if MatchesFilter(message, filterText) and not MatchesExclude(message, sender, excludeText) then
+        -- Message would be visible, flash the tab
+        self:FlashTab(tabId)
+    end
+end
+
+-- Flash a tab to draw attention to new messages
+function LogFilterGroup:FlashTab(tabId)
+    local frame = LogFilterGroupFrame
+    if not frame or not frame.tabButtons then return end
+
+    -- Find the tab button
+    local tabButton = nil
+    for _, button in ipairs(frame.tabButtons) do
+        if button.tabId == tabId then
+            tabButton = button
+            break
+        end
+    end
+
+    if not tabButton then return end
+
+    -- Mark tab as flashing
+    tabButton.isFlashing = true
+    tabButton.flashElapsed = 0
+
+    -- Create OnUpdate handler for flashing effect
+    if not tabButton.flashScript then
+        tabButton.flashScript = true
+        tabButton:SetScript("OnUpdate", function()
+            if not this.isFlashing then return end
+
+            this.flashElapsed = this.flashElapsed + arg1
+
+            -- Flash every 0.5 seconds
+            local flashCycle = math.mod(this.flashElapsed, 1.0)
+            if flashCycle < 0.5 then
+                -- Bright yellow/gold
+                this:SetBackdropColor(0.8, 0.6, 0.1, 1)
+                this.text:SetTextColor(1, 1, 0.5, 1)
+            else
+                -- Normal inactive color
+                this:SetBackdropColor(0.08, 0.08, 0.08, 1)
+                this.text:SetTextColor(0.6, 0.6, 0.6, 1)
+            end
+        end)
+    end
+end
+
+-- Stop flashing a tab
+function LogFilterGroup:StopFlashingTab(tabId)
+    local frame = LogFilterGroupFrame
+    if not frame or not frame.tabButtons then return end
+
+    -- Find the tab button
+    for _, button in ipairs(frame.tabButtons) do
+        if button.tabId == tabId then
+            button.isFlashing = false
+            button.flashElapsed = 0
+            break
+        end
+    end
+
+    -- Update tab appearance to restore proper colors
+    self:UpdateTabAppearance()
 end
 
 -- Update the display

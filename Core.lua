@@ -196,10 +196,10 @@ function LogFilterGroup:Initialize()
     print("LogFilterGroup loaded! Type /lfg to open the interface.")
 end
 
--- Clean messages older than 30 minutes
+-- Clean messages older than 5 minutes
 function LogFilterGroup:CleanOldMessages()
     local currentTime = time()
-    local maxAge = 1800  -- 30 minutes
+    local maxAge = 300  -- 5 minutes (300 seconds)
     local cleaned = false
 
     for _, tab in ipairs(self.tabs) do
@@ -252,6 +252,11 @@ function LogFilterGroup:AddMessage(tabId, sender, message)
     -- Restore main window if minimized and this is the active tab
     if self.mainWindowMinimized and self.activeTabId == tabId and LogFilterGroupFrame then
         self:RestoreMainWindow()
+    end
+
+    -- Check if message passes filters and flash tab if needed (only for inactive tabs)
+    if LogFilterGroupFrame and tabId ~= self.activeTabId then
+        self:CheckAndFlashTab(tabId, sender, message)
     end
 
     -- Update display if frame exists
