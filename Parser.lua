@@ -135,17 +135,17 @@ function LogFilterGroup:ParseMessage(sender, message)
 
     -- Add to appropriate category (LFM takes priority, then LFG, then profession)
     if isLFM then
-        self:AddLFMMessage(sender, message)
+        self:AddMessage("lfm", sender, message)
         if self.debugMode then
             DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as LFM from " .. sender)
         end
     elseif isLFG then
-        self:AddLFGMessage(sender, message)
+        self:AddMessage("lfg", sender, message)
         if self.debugMode then
             DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as LFG from " .. sender)
         end
     elseif isProfession then
-        self:AddProfessionMessage(sender, message)
+        self:AddMessage("profession", sender, message)
         if self.debugMode then
             DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Categorized as Profession from " .. sender)
         end

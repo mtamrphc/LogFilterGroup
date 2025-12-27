@@ -36,6 +36,16 @@ function LogFilterGroup:MinimizeWindow(windowType)
 
     -- Hide all content except title bar
     frame:SetHeight(30)
+
+    -- Immediately hide all message rows before hiding scrollFrame
+    if frame.rows then
+        for i = 1, table.getn(frame.rows) do
+            if frame.rows[i] then
+                frame.rows[i]:Hide()
+            end
+        end
+    end
+
     frame.scrollFrame:Hide()
 
     -- Explicitly hide the scroll bar (child of scrollFrame)
@@ -54,31 +64,14 @@ function LogFilterGroup:MinimizeWindow(windowType)
         frame.filterLabel:Hide()
     end
 
-    -- Hide filter help text
-    if frame.filterHelp then
-        frame.filterHelp:Hide()
-    end
-
-    -- Hide filter inputs (main window has two, separate windows have one)
+    -- Hide filter input
     if frame.filterInput then
         frame.filterInput:Hide()
     end
-    if frame.filterInputLFM then
-        frame.filterInputLFM:Hide()
-    end
-    if frame.filterInputProfession then
-        frame.filterInputProfession:Hide()
-    end
 
-    -- Hide exclude inputs (main window has two, separate windows have one)
+    -- Hide exclude input
     if frame.excludeInput then
         frame.excludeInput:Hide()
-    end
-    if frame.excludeInputLFM then
-        frame.excludeInputLFM:Hide()
-    end
-    if frame.excludeInputProfession then
-        frame.excludeInputProfession:Hide()
     end
 
     -- Hide exclude label
@@ -89,34 +82,56 @@ function LogFilterGroup:MinimizeWindow(windowType)
     -- Hide auto-send checkbox and related elements
     if frame.autoSendCheckbox then
         frame.autoSendCheckbox:Hide()
+    end
+    if frame.autoSendLabel then
         frame.autoSendLabel:Hide()
     end
 
-    -- Hide whisper message inputs
+    -- Hide whisper message input
     if frame.whisperMsgInput then
         frame.whisperMsgInput:Hide()
     end
-    if frame.whisperMsgInputLFM then
-        frame.whisperMsgInputLFM:Hide()
-    end
-    if frame.whisperMsgInputProf then
-        frame.whisperMsgInputProf:Hide()
+
+    -- Hide dynamic tab buttons by moving them off-screen AND hiding
+    if frame.tabButtons then
+        if self.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Hiding " .. table.getn(frame.tabButtons) .. " tab buttons")
+        end
+        for i, button in ipairs(frame.tabButtons) do
+            if button then
+                button:ClearAllPoints()
+                button:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -5000, -5000)
+                button:Hide()
+                if self.debugMode then
+                    DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Tab " .. i .. " moved and hidden")
+                end
+            end
+        end
     end
 
-    -- Hide tabs (main window only)
-    if frame.lfmTab then
-        frame.lfmTab:Hide()
-    end
-    if frame.lfgTab then
-        frame.lfgTab:Hide()
-    end
-    if frame.professionTab then
-        frame.professionTab:Hide()
+    -- Also try to hide by global names
+    for _, tab in ipairs(LogFilterGroup.tabs) do
+        local globalButton = getglobal("LogFilterGroupTab" .. tab.id)
+        if globalButton then
+            globalButton:ClearAllPoints()
+            globalButton:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -5000, -5000)
+            globalButton:Hide()
+        end
     end
 
-    -- Hide separate button (main window only)
-    if frame.separateButton then
-        frame.separateButton:Hide()
+    -- Hide add tab button
+    if frame.addTabButton then
+        frame.addTabButton:ClearAllPoints()
+        frame.addTabButton:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -5000, -5000)
+        frame.addTabButton:Hide()
+    end
+
+    -- Also hide by global name
+    local globalAddButton = getglobal("LogFilterGroupAddTab")
+    if globalAddButton then
+        globalAddButton:ClearAllPoints()
+        globalAddButton:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -5000, -5000)
+        globalAddButton:Hide()
     end
 
     -- Change minimize button to restore button
@@ -162,13 +177,33 @@ function LogFilterGroup:RestoreWindow(windowType)
         LogFilterGroup.mainWindowMinimizedTab = nil
     end
 
-    -- Show all content
+    -- Show all content first (must be visible before we can show rows)
     frame.scrollFrame:Show()
 
     -- Explicitly show the scroll bar
     local scrollBar = getglobal(frame.scrollFrame:GetName() .. "ScrollBar")
     if scrollBar then
         scrollBar:Show()
+    end
+
+    -- Immediately show all visible rows to prevent delay
+    if frame.rows then
+        for i = 1, table.getn(frame.rows) do
+            if frame.rows[i] then
+                frame.rows[i]:Show()
+            end
+        end
+    end
+
+    -- Now update the display with proper data
+    if windowType == "main" then
+        if LogFilterGroup.UpdateDisplay then
+            LogFilterGroup:UpdateDisplay()
+        end
+    else
+        if LogFilterGroup.UpdateSeparateWindow then
+            LogFilterGroup:UpdateSeparateWindow(windowType)
+        end
     end
 
     frame.statusText:Show()
@@ -201,36 +236,31 @@ function LogFilterGroup:RestoreWindow(windowType)
         frame.excludeInput:Show()
     end
 
-    -- Show separate button (main window only)
-    if frame.separateButton then
-        frame.separateButton:Show()
+    -- Show auto-send checkbox and related elements
+    if frame.autoSendCheckbox then
+        frame.autoSendCheckbox:Show()
+    end
+    if frame.autoSendLabel then
+        frame.autoSendLabel:Show()
     end
 
-    -- For main window, show appropriate filter inputs based on current tab
-    if windowType == "main" then
-        if frame.currentTab == "profession" then
-            frame.filterInputProfession:Show()
-            frame.excludeInputProfession:Show()
-            frame.autoSendCheckbox:Show()
-            frame.autoSendLabel:Show()
-            frame.whisperMsgInputProf:Show()
-        elseif frame.currentTab == "lfg" then
-            frame.filterInputLFM:Show()
-            frame.excludeInputLFM:Show()
-        else
-            frame.filterInputLFM:Show()
-            frame.excludeInputLFM:Show()
-            frame.autoSendCheckbox:Show()
-            frame.autoSendLabel:Show()
-            frame.whisperMsgInputLFM:Show()
+    -- Show whisper message input
+    if frame.whisperMsgInput then
+        frame.whisperMsgInput:Show()
+    end
+
+    -- Show dynamic tab buttons - need to restore their positions via RefreshTabButtons
+    LogFilterGroup:RefreshTabButtons()
+
+    if frame.tabButtons then
+        for _, button in ipairs(frame.tabButtons) do
+            button:Show()
         end
-    else
-        -- For separate windows, always show their auto-send elements
-        if frame.autoSendCheckbox then
-            frame.autoSendCheckbox:Show()
-            frame.autoSendLabel:Show()
-            frame.whisperMsgInput:Show()
-        end
+    end
+
+    -- Show add tab button
+    if frame.addTabButton then
+        frame.addTabButton:Show()
     end
 
     -- Change restore button back to minimize button
@@ -244,28 +274,9 @@ function LogFilterGroup:RestoreWindow(windowType)
         end
         LogFilterGroup:MinimizeWindow(wType)
     end)
-
-    -- Update the window display
-    if windowType == "main" then
-        if LogFilterGroup.UpdateDisplay then
-            LogFilterGroup:UpdateDisplay()
-        end
-    else
-        if LogFilterGroup.UpdateSeparateWindow then
-            LogFilterGroup:UpdateSeparateWindow(windowType)
-        end
-    end
 end
 
--- Backward compatibility wrappers - these now call the unified functions
-function LogFilterGroup:MinimizeSeparateWindow(windowType)
-    self:MinimizeWindow(windowType)
-end
-
-function LogFilterGroup:RestoreSeparateWindow(windowType)
-    self:RestoreWindow(windowType)
-end
-
+-- Main window minimize/restore functions
 function LogFilterGroup:MinimizeMainWindow()
     self:MinimizeWindow("main")
 end

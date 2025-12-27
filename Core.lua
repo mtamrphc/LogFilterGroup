@@ -1,48 +1,194 @@
 -- LogFilterGroup Core
 LogFilterGroup = {}
-LogFilterGroup.lfmMessages = {}  -- Looking for more (forming groups)
-LogFilterGroup.lfgMessages = {}  -- Looking for group (players seeking groups)
-LogFilterGroup.professionMessages = {}
+LogFilterGroup.tabs = {}  -- Dynamic tab system
+LogFilterGroup.activeTabId = "lfm"  -- Currently active tab
+LogFilterGroup.nextTabId = 1  -- Counter for generating unique custom tab IDs
 LogFilterGroup.lastUpdate = 0
 LogFilterGroup.mainWindowMinimized = false
 LogFilterGroup.mainWindowMinimizedTab = nil  -- Track which tab was active when main window minimized
-LogFilterGroup.poppedOutTabs = {}  -- Track which tabs are popped out (not persisted across sessions)
 LogFilterGroup.debugMode = false  -- Debug mode off by default
+LogFilterGroup.globalLocked = false  -- Global lock state for all filter inputs
 
 -- Database defaults
 local defaults = {
-    lfmMessages = {},
-    lfgMessages = {},
-    professionMessages = {},
-    autoSendWhisper = false,
-    whisperMessageLFM = "inv",
-    whisperMessageProfession = "How much?",
-    filterTextLFM = "",
-    filterTextProfession = "",
-    excludeTextLFM = "",
-    excludeTextProfession = ""
+    globalLocked = false,
+    tabs = {
+        {
+            id = "lfm",
+            name = "Find Group",
+            messages = {},
+            filterText = "",
+            excludeText = "",
+            whisperTemplate = "inv",
+            autoSendWhisper = false,
+            isDefault = true,
+            locked = false
+        },
+        {
+            id = "lfg",
+            name = "Find Member",
+            messages = {},
+            filterText = "",
+            excludeText = "",
+            whisperTemplate = "",
+            autoSendWhisper = false,
+            isDefault = true,
+            locked = false
+        },
+        {
+            id = "profession",
+            name = "Professions",
+            messages = {},
+            filterText = "",
+            excludeText = "",
+            whisperTemplate = "How much?",
+            autoSendWhisper = false,
+            isDefault = true,
+            locked = false
+        }
+    },
+    activeTabId = "lfm",
+    nextTabId = 1
 }
+
+-- Find tab by ID
+function LogFilterGroup:GetTab(tabId)
+    for _, tab in ipairs(self.tabs) do
+        if tab.id == tabId then
+            return tab
+        end
+    end
+    return nil
+end
+
+-- Add new custom tab
+function LogFilterGroup:AddTab(name)
+    local newTab = {
+        id = "custom_" .. self.nextTabId,
+        name = name or ("Tab " .. self.nextTabId),
+        messages = {},
+        filterText = "",
+        excludeText = "",
+        whisperTemplate = "",
+        autoSendWhisper = false,
+        isDefault = false,
+        locked = false
+    }
+    table.insert(self.tabs, newTab)
+    self.nextTabId = self.nextTabId + 1
+    self:SaveSettings()
+    return newTab
+end
+
+-- Delete custom tab (can't delete default tabs)
+function LogFilterGroup:DeleteTab(tabId)
+    local tab = self:GetTab(tabId)
+    if not tab or tab.isDefault then
+        return false
+    end
+
+    for i, t in ipairs(self.tabs) do
+        if t.id == tabId then
+            table.remove(self.tabs, i)
+            -- If deleting active tab, switch to first tab
+            if self.activeTabId == tabId then
+                self.activeTabId = self.tabs[1].id
+            end
+            self:SaveSettings()
+            return true
+        end
+    end
+    return false
+end
 
 -- Initialize addon
 function LogFilterGroup:Initialize()
     -- Initialize saved variables
     if not LogFilterGroupDB then
-        LogFilterGroupDB = defaults
+        LogFilterGroupDB = {}
     end
 
-    -- Clear all messages on load
-    self.lfmMessages = {}
-    self.lfgMessages = {}
-    self.professionMessages = {}
+    -- Deep copy defaults for any missing fields
+    for key, value in pairs(defaults) do
+        if LogFilterGroupDB[key] == nil then
+            if key == "tabs" then
+                -- Deep copy tabs
+                LogFilterGroupDB[key] = {}
+                for i, tab in ipairs(value) do
+                    LogFilterGroupDB[key][i] = {}
+                    for k, v in pairs(tab) do
+                        LogFilterGroupDB[key][i][k] = v
+                    end
+                end
+            else
+                LogFilterGroupDB[key] = value
+            end
+        end
+    end
 
-    -- Load settings (but NOT messages - we want fresh start each load)
-    self.autoSendWhisper = LogFilterGroupDB.autoSendWhisper or false
-    self.whisperMessageLFM = LogFilterGroupDB.whisperMessageLFM or "inv"
-    self.whisperMessageProfession = LogFilterGroupDB.whisperMessageProfession or "How much?"
-    self.filterTextLFM = LogFilterGroupDB.filterTextLFM or ""
-    self.filterTextProfession = LogFilterGroupDB.filterTextProfession or ""
-    self.excludeTextLFM = LogFilterGroupDB.excludeTextLFM or ""
-    self.excludeTextProfession = LogFilterGroupDB.excludeTextProfession or ""
+    -- Migrate old data structure if needed
+    if LogFilterGroupDB.filterTextLFM then
+        -- Old structure detected, migrate
+        -- Ensure we have the default tab structure first
+        if not LogFilterGroupDB.tabs or table.getn(LogFilterGroupDB.tabs) == 0 then
+            LogFilterGroupDB.tabs = {}
+            for i, tab in ipairs(defaults.tabs) do
+                LogFilterGroupDB.tabs[i] = {}
+                for k, v in pairs(tab) do
+                    LogFilterGroupDB.tabs[i][k] = v
+                end
+            end
+        end
+
+        if not LogFilterGroupDB.tabs[1] then LogFilterGroupDB.tabs[1] = {} end
+        if not LogFilterGroupDB.tabs[2] then LogFilterGroupDB.tabs[2] = {} end
+        if not LogFilterGroupDB.tabs[3] then LogFilterGroupDB.tabs[3] = {} end
+
+        LogFilterGroupDB.tabs[1].filterText = LogFilterGroupDB.filterTextLFM
+        LogFilterGroupDB.tabs[2].filterText = LogFilterGroupDB.filterTextLFM
+        LogFilterGroupDB.tabs[1].excludeText = LogFilterGroupDB.excludeTextLFM or ""
+        LogFilterGroupDB.tabs[2].excludeText = LogFilterGroupDB.excludeTextLFM or ""
+        LogFilterGroupDB.tabs[3].filterText = LogFilterGroupDB.filterTextProfession or ""
+        LogFilterGroupDB.tabs[3].excludeText = LogFilterGroupDB.excludeTextProfession or ""
+        LogFilterGroupDB.tabs[1].whisperTemplate = LogFilterGroupDB.whisperMessageLFM or "inv"
+        LogFilterGroupDB.tabs[3].whisperTemplate = LogFilterGroupDB.whisperMessageProfession or "How much?"
+
+        -- Clean up old fields
+        LogFilterGroupDB.filterTextLFM = nil
+        LogFilterGroupDB.filterTextProfession = nil
+        LogFilterGroupDB.excludeTextLFM = nil
+        LogFilterGroupDB.excludeTextProfession = nil
+        LogFilterGroupDB.whisperMessageLFM = nil
+        LogFilterGroupDB.whisperMessageProfession = nil
+        LogFilterGroupDB.autoSendWhisper = nil
+        LogFilterGroupDB.lfmMessages = nil
+        LogFilterGroupDB.lfgMessages = nil
+        LogFilterGroupDB.professionMessages = nil
+
+        print("LogFilterGroup: Migrated settings from old version")
+    end
+
+    -- Load tabs (ensure at least default tabs exist)
+    if not LogFilterGroupDB.tabs or table.getn(LogFilterGroupDB.tabs) == 0 then
+        LogFilterGroupDB.tabs = {}
+        for i, tab in ipairs(defaults.tabs) do
+            LogFilterGroupDB.tabs[i] = {}
+            for k, v in pairs(tab) do
+                LogFilterGroupDB.tabs[i][k] = v
+            end
+        end
+    end
+
+    -- Load settings
+    self.tabs = LogFilterGroupDB.tabs
+    self.activeTabId = LogFilterGroupDB.activeTabId or "lfm"
+    self.nextTabId = LogFilterGroupDB.nextTabId or 1
+    self.globalLocked = LogFilterGroupDB.globalLocked or false
+
+    -- Clear old messages on load (start fresh each session)
+    for _, tab in ipairs(self.tabs) do
+        tab.messages = {}
+    end
 
     -- Save the cleared state
     self:SaveData()
@@ -50,33 +196,18 @@ function LogFilterGroup:Initialize()
     print("LogFilterGroup loaded! Type /lfg to open the interface.")
 end
 
--- Clean messages older than 5 minutes
+-- Clean messages older than 30 minutes
 function LogFilterGroup:CleanOldMessages()
     local currentTime = time()
-    local maxAge = 300 -- 5 minutes
+    local maxAge = 1800  -- 30 minutes
     local cleaned = false
 
-    -- Clean LFM messages
-    for sender, data in pairs(self.lfmMessages) do
-        if currentTime - data.timestamp > maxAge then
-            self.lfmMessages[sender] = nil
-            cleaned = true
-        end
-    end
-
-    -- Clean LFG messages
-    for sender, data in pairs(self.lfgMessages) do
-        if currentTime - data.timestamp > maxAge then
-            self.lfgMessages[sender] = nil
-            cleaned = true
-        end
-    end
-
-    -- Clean profession messages
-    for sender, data in pairs(self.professionMessages) do
-        if currentTime - data.timestamp > maxAge then
-            self.professionMessages[sender] = nil
-            cleaned = true
+    for _, tab in ipairs(self.tabs) do
+        for sender, data in pairs(tab.messages) do
+            if currentTime - data.timestamp > maxAge then
+                tab.messages[sender] = nil
+                cleaned = true
+            end
         end
     end
 
@@ -87,126 +218,108 @@ function LogFilterGroup:CleanOldMessages()
         if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
             self:UpdateDisplay()
         end
-
-        -- Update separate windows if visible
-        if LogFilterGroupLFMWindow and LogFilterGroupLFMWindow:IsVisible() then
-            self:UpdateSeparateWindow("lfm")
-        end
-        if LogFilterGroupLFGWindow and LogFilterGroupLFGWindow:IsVisible() then
-            self:UpdateSeparateWindow("lfg")
-        end
-        if LogFilterGroupProfessionWindow and LogFilterGroupProfessionWindow:IsVisible() then
-            self:UpdateSeparateWindow("profession")
-        end
     end
 end
 
--- Add or update an LFM message (looking for more)
-function LogFilterGroup:AddLFMMessage(sender, message)
-    self.lfmMessages[sender] = {
-        message = message,
-        timestamp = time()
-    }
+-- Add or update a message in a specific tab
+function LogFilterGroup:AddMessage(tabId, sender, message)
+    local tab = self:GetTab(tabId)
+    if not tab then
+        return
+    end
+
+    -- Only update if message is new or different, preserve whispered/invited state
+    if not tab.messages[sender] then
+        tab.messages[sender] = {
+            message = message,
+            timestamp = time(),
+            whispered = false,
+            invited = false
+        }
+    else
+        -- Update message and timestamp but preserve whispered/invited state
+        local wasWhispered = tab.messages[sender].whispered or false
+        local wasInvited = tab.messages[sender].invited or false
+        tab.messages[sender] = {
+            message = message,
+            timestamp = time(),
+            whispered = wasWhispered,
+            invited = wasInvited
+        }
+    end
     self:SaveData()
 
-    -- Restore main window if minimized and this was the active tab
-    if self.mainWindowMinimized and self.mainWindowMinimizedTab == "lfm" and LogFilterGroupFrame then
+    -- Restore main window if minimized and this is the active tab
+    if self.mainWindowMinimized and self.activeTabId == tabId and LogFilterGroupFrame then
         self:RestoreMainWindow()
     end
 
-    -- Don't auto-restore minimized separate windows
-    -- if LogFilterGroupLFMWindow and LogFilterGroupLFMWindow.isMinimized then
-    --     self:RestoreSeparateWindow("lfm")
-    -- end
-
+    -- Update display if frame exists
     if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
         self:UpdateDisplay()
-    end
-
-    -- Update separate window if open
-    if LogFilterGroupLFMWindow and LogFilterGroupLFMWindow:IsVisible() then
-        self:UpdateSeparateWindow("lfm")
-    end
-end
-
--- Add or update an LFG message (looking for group)
-function LogFilterGroup:AddLFGMessage(sender, message)
-    self.lfgMessages[sender] = {
-        message = message,
-        timestamp = time()
-    }
-    self:SaveData()
-
-    -- Restore main window if minimized and this was the active tab
-    if self.mainWindowMinimized and self.mainWindowMinimizedTab == "lfg" and LogFilterGroupFrame then
-        self:RestoreMainWindow()
-    end
-
-    -- Don't auto-restore minimized separate windows
-    -- if LogFilterGroupLFGWindow and LogFilterGroupLFGWindow.isMinimized then
-    --     self:RestoreSeparateWindow("lfg")
-    -- end
-
-    if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
-        self:UpdateDisplay()
-    end
-
-    -- Update separate window if open
-    if LogFilterGroupLFGWindow and LogFilterGroupLFGWindow:IsVisible() then
-        self:UpdateSeparateWindow("lfg")
-    end
-end
-
--- Add or update a profession message
-function LogFilterGroup:AddProfessionMessage(sender, message)
-    self.professionMessages[sender] = {
-        message = message,
-        timestamp = time()
-    }
-    self:SaveData()
-
-    -- Restore main window if minimized and this was the active tab
-    if self.mainWindowMinimized and self.mainWindowMinimizedTab == "profession" and LogFilterGroupFrame then
-        self:RestoreMainWindow()
-    end
-
-    -- Don't auto-restore minimized separate windows
-    -- if LogFilterGroupProfessionWindow and LogFilterGroupProfessionWindow.isMinimized then
-    --     self:RestoreSeparateWindow("profession")
-    -- end
-
-    if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
-        self:UpdateDisplay()
-    end
-
-    -- Update separate window if open
-    if LogFilterGroupProfessionWindow and LogFilterGroupProfessionWindow:IsVisible() then
-        self:UpdateSeparateWindow("profession")
     end
 end
 
 -- Save data to saved variables
 function LogFilterGroup:SaveData()
-    LogFilterGroupDB.lfmMessages = self.lfmMessages
-    LogFilterGroupDB.lfgMessages = self.lfgMessages
-    LogFilterGroupDB.professionMessages = self.professionMessages
+    LogFilterGroupDB.tabs = self.tabs
 end
 
 -- Save settings to saved variables
 function LogFilterGroup:SaveSettings()
-    LogFilterGroupDB.autoSendWhisper = self.autoSendWhisper
-    LogFilterGroupDB.whisperMessageLFM = self.whisperMessageLFM
-    LogFilterGroupDB.whisperMessageProfession = self.whisperMessageProfession
-    LogFilterGroupDB.filterTextLFM = self.filterTextLFM
-    LogFilterGroupDB.filterTextProfession = self.filterTextProfession
-    LogFilterGroupDB.excludeTextLFM = self.excludeTextLFM
-    LogFilterGroupDB.excludeTextProfession = self.excludeTextProfession
+    LogFilterGroupDB.tabs = self.tabs
+    LogFilterGroupDB.activeTabId = self.activeTabId
+    LogFilterGroupDB.nextTabId = self.nextTabId
+    LogFilterGroupDB.globalLocked = self.globalLocked
+end
+
+-- Mark a message as whispered
+function LogFilterGroup:MarkAsWhispered(tabId, sender)
+    local tab = self:GetTab(tabId)
+    if tab and tab.messages[sender] then
+        tab.messages[sender].whispered = true
+        self:SaveData()
+    end
+end
+
+-- Mark a message as invited
+function LogFilterGroup:MarkAsInvited(tabId, sender)
+    local tab = self:GetTab(tabId)
+    if tab and tab.messages[sender] then
+        tab.messages[sender].invited = true
+        self:SaveData()
+
+        -- Track pending invite with timestamp
+        if not self.pendingInvites then
+            self.pendingInvites = {}
+        end
+        self.pendingInvites[sender] = time()
+    end
+end
+
+-- Unmark a message as invited (when invite fails or is declined)
+function LogFilterGroup:UnmarkAsInvited(tabId, sender)
+    local tab = self:GetTab(tabId)
+    if tab and tab.messages[sender] then
+        tab.messages[sender].invited = false
+        self:SaveData()
+
+        -- Clear pending invite
+        if self.pendingInvites then
+            self.pendingInvites[sender] = nil
+        end
+
+        -- Update display if visible
+        if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
+            self:UpdateDisplay()
+        end
+    end
 end
 
 -- Get time ago string
 function LogFilterGroup:GetTimeAgo(timestamp)
     local diff = time() - timestamp
-    
+
     if diff < 60 then
         return diff .. "s ago"
     elseif diff < 3600 then
@@ -222,6 +335,8 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")  -- All numbered channels (General, Trade, World, LocalDefense, etc.)
 eventFrame:RegisterEvent("CHAT_MSG_YELL")
 eventFrame:RegisterEvent("CHAT_MSG_SAY")
+eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")  -- System messages (invite declined, already in group, etc.)
+eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")  -- Party member joins/leaves
 eventFrame:RegisterEvent("PLAYER_LOGOUT")
 
 eventFrame:SetScript("OnEvent", function()
@@ -255,6 +370,70 @@ eventFrame:SetScript("OnEvent", function()
             end
             LogFilterGroup:ParseMessage(sender, message)
         end
+    elseif event == "CHAT_MSG_SYSTEM" then
+        -- Check for invite-related system messages
+        local message = arg1
+        if message and LogFilterGroup.pendingInvites then
+            -- Parse player name from various system messages
+            -- "Player is already in a group."
+            -- "Player declines your group invitation."
+            -- "No player named 'Player' is currently playing."
+            -- "Player is ignoring you."
+
+            local playerName = nil
+            local _, _, name
+
+            -- Pattern: "PlayerName is already in a group."
+            _, _, name = string.find(message, "^(.+) is already in a group%.$")
+            if name then
+                playerName = name
+            end
+
+            if not playerName then
+                -- Pattern: "PlayerName declines your group invitation."
+                _, _, name = string.find(message, "^(.+) declines your group invitation%.$")
+                if name then
+                    playerName = name
+                end
+            end
+
+            if not playerName then
+                -- Pattern: "No player named 'PlayerName' is currently playing."
+                _, _, name = string.find(message, "^No player named '(.+)' is currently playing%.$")
+                if name then
+                    playerName = name
+                end
+            end
+
+            if not playerName then
+                -- Pattern: "PlayerName is ignoring you."
+                _, _, name = string.find(message, "^(.+) is ignoring you%.$")
+                if name then
+                    playerName = name
+                end
+            end
+
+            if playerName and LogFilterGroup.pendingInvites[playerName] then
+                -- Invite failed or was declined, unmark as invited
+                LogFilterGroup:UnmarkAsInvited(LogFilterGroup.activeTabId, playerName)
+
+                if LogFilterGroup.debugMode then
+                    DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup: Invite to " .. playerName .. " failed/declined")
+                end
+            end
+        end
+    elseif event == "PARTY_MEMBERS_CHANGED" then
+        -- Someone joined or left the party
+        -- Clear old pending invites (they either joined or we know the result by now)
+        if LogFilterGroup.pendingInvites then
+            local currentTime = time()
+            for sender, inviteTime in pairs(LogFilterGroup.pendingInvites) do
+                -- Clear invites older than 60 seconds
+                if currentTime - inviteTime > 60 then
+                    LogFilterGroup.pendingInvites[sender] = nil
+                end
+            end
+        end
     elseif event == "PLAYER_LOGOUT" then
         LogFilterGroup:SaveData()
     end
@@ -264,9 +443,9 @@ end)
 SLASH_LOGFILTERGROUP1 = "/lfg"
 SlashCmdList["LOGFILTERGROUP"] = function(msg)
     if msg == "clear" then
-        LogFilterGroup.lfmMessages = {}
-        LogFilterGroup.lfgMessages = {}
-        LogFilterGroup.professionMessages = {}
+        for _, tab in ipairs(LogFilterGroup.tabs) do
+            tab.messages = {}
+        end
         LogFilterGroup:SaveData()
         print("LogFilterGroup: All messages cleared.")
         if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
@@ -274,13 +453,13 @@ SlashCmdList["LOGFILTERGROUP"] = function(msg)
         end
     elseif msg == "test" then
         -- Add test messages
-        LogFilterGroup:AddLFMMessage("TestPlayer1", "LFM BRD need tank and healer")
-        LogFilterGroup:AddLFMMessage("TestPlayer2", "LF2M SM Cath")
-        LogFilterGroup:AddLFGMessage("TestPlayer3", "LFG Stratholme")
-        LogFilterGroup:AddLFGMessage("TestPlayer4", "LFG UBRS as DPS")
-        LogFilterGroup:AddProfessionMessage("TestCrafter1", "Blacksmith LFW, your mats, tips appreciated")
-        LogFilterGroup:AddProfessionMessage("TestCrafter2", "WTS enchanting services, PST")
-        LogFilterGroup:AddProfessionMessage("TestCrafter3", "LF alchemist for transmute")
+        LogFilterGroup:AddMessage("lfm", "TestPlayer1", "LFM BRD need tank and healer")
+        LogFilterGroup:AddMessage("lfm", "TestPlayer2", "LF2M SM Cath")
+        LogFilterGroup:AddMessage("lfg", "TestPlayer3", "LFG Stratholme")
+        LogFilterGroup:AddMessage("lfg", "TestPlayer4", "LFG UBRS as DPS")
+        LogFilterGroup:AddMessage("profession", "TestCrafter1", "Blacksmith LFW, your mats, tips appreciated")
+        LogFilterGroup:AddMessage("profession", "TestCrafter2", "WTS enchanting services, PST")
+        LogFilterGroup:AddMessage("profession", "TestCrafter3", "LF alchemist for transmute")
         print("LogFilterGroup: Test messages added. Open /lfg to view.")
     elseif string.sub(msg, 1, 5) == "debug" then
         -- Toggle debug mode
