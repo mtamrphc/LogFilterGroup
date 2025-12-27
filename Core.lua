@@ -222,10 +222,6 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")  -- All numbered channels (General, Trade, World, LocalDefense, etc.)
 eventFrame:RegisterEvent("CHAT_MSG_YELL")
 eventFrame:RegisterEvent("CHAT_MSG_SAY")
-eventFrame:RegisterEvent("CHAT_MSG_GUILD")
-eventFrame:RegisterEvent("CHAT_MSG_OFFICER")
-eventFrame:RegisterEvent("CHAT_MSG_PARTY")
-eventFrame:RegisterEvent("CHAT_MSG_RAID")
 eventFrame:RegisterEvent("PLAYER_LOGOUT")
 
 eventFrame:SetScript("OnEvent", function()
@@ -243,7 +239,7 @@ eventFrame:SetScript("OnEvent", function()
                 LogFilterGroup.lastCleanup = currentTime
             end
         end)
-    elseif event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" or event == "CHAT_MSG_GUILD" or event == "CHAT_MSG_OFFICER" or event == "CHAT_MSG_PARTY" or event == "CHAT_MSG_RAID" then
+    elseif event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" then
         local message = arg1
         local sender = arg2
 

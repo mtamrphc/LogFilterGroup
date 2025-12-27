@@ -104,11 +104,36 @@ local function EvaluateSimpleExpression(message, expression)
     end
 end
 
+-- Helper function to strip WoW item/enchant/spell/quest links from message text
+-- This prevents internal link IDs from matching filter terms
+local function StripLinks(message)
+    if not message then
+        return ""
+    end
+
+    -- Strip color codes: |cXXXXXXXX and |r
+    local stripped = string.gsub(message, "|c%x%x%x%x%x%x%x%x", "")
+    stripped = string.gsub(stripped, "|r", "")
+
+    -- Strip link codes but keep the visible text: |Htype:id|h[text]|h -> text
+    -- Pattern matches: |H<anything>|h[<text>]|h
+    stripped = string.gsub(stripped, "|H.-|h%[(.-)%]|h", "%1")
+
+    -- Strip any remaining pipe codes
+    stripped = string.gsub(stripped, "|H.-|h", "")
+    stripped = string.gsub(stripped, "|h", "")
+
+    return stripped
+end
+
 -- Parse and evaluate filter expression with AND/OR logic and parentheses
 local function MatchesFilter(message, filterText)
     if not filterText or filterText == "" then
         return true
     end
+
+    -- Strip item/enchant/spell links before filtering
+    message = StripLinks(message)
 
     local lowerFilter = filterText
     local placeholderCount = 0
@@ -209,13 +234,23 @@ local function MatchesFilter(message, filterText)
 end
 
 -- Helper function to check if a message should be excluded based on exclude filter
-local function MatchesExclude(message, excludeText)
+-- Checks both message content and sender name
+local function MatchesExclude(message, sender, excludeText)
     if not excludeText or excludeText == "" then
         return false  -- No exclude filter means don't exclude
     end
 
-    -- Use same filter logic as MatchesFilter - if it matches the exclude text, return true (should be excluded)
-    return MatchesFilter(message, excludeText)
+    -- Check if the exclude filter matches the message content
+    if MatchesFilter(message, excludeText) then
+        return true
+    end
+
+    -- Check if the exclude filter matches the sender name
+    if MatchesFilter(sender, excludeText) then
+        return true
+    end
+
+    return false
 end
 
 
@@ -983,8 +1018,8 @@ function LogFilterGroup:UpdateDisplay()
     end
 
     for sender, data in pairs(sourceData) do
-        -- Apply include filter and exclude filter
-        if MatchesFilter(data.message, filterText) and not MatchesExclude(data.message, excludeText) then
+        -- Apply include filter and exclude filter (exclude checks both message and sender name)
+        if MatchesFilter(data.message, filterText) and not MatchesExclude(data.message, sender, excludeText) then
             table.insert(messages, {
                 sender = sender,
                 message = data.message,
@@ -1293,12 +1328,45 @@ function LogFilterGroup:CreateSeparateWindow(windowType)
     filterHelp:SetText("|cffaaaaaa(You can use 1 and/or statement)|r")
     frame.filterHelp = filterHelp
 
+    -- Exclude label
+    local excludeLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    excludeLabel:SetPoint("TOPLEFT", filterHelp, "BOTTOMLEFT", 0, -5)
+    excludeLabel:SetText("Exclude:")
+    frame.excludeLabel = excludeLabel
+
+    -- Exclude input box
+    local excludeInput = CreateFrame("EditBox", frameName .. "ExcludeInput", frame)
+    excludeInput:SetHeight(20)
+    excludeInput:SetPoint("LEFT", excludeLabel, "RIGHT", 3, 0)
+    excludeInput:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
+    excludeInput:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    excludeInput:SetBackdropColor(0, 0, 0, 0.8)
+    excludeInput:SetFontObject(GameFontNormal)
+    excludeInput:SetTextInsets(5, 5, 0, 0)
+    excludeInput:SetAutoFocus(false)
+    excludeInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+    excludeInput:SetScript("OnEnterPressed", function()
+        this:ClearFocus()
+        LogFilterGroup:UpdateSeparateWindow(windowType)
+    end)
+    excludeInput:SetScript("OnTextChanged", function()
+        LogFilterGroup:UpdateSeparateWindow(windowType)
+    end)
+    frame.excludeInput = excludeInput
+
     -- Auto-send whisper checkbox (only for LFM and Profession windows)
     if windowType ~= "lfg" then
         local autoSendCheckbox = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
         autoSendCheckbox:SetWidth(20)
         autoSendCheckbox:SetHeight(20)
-        autoSendCheckbox:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -18)
+        autoSendCheckbox:SetPoint("TOPLEFT", excludeLabel, "BOTTOMLEFT", 0, -5)
         autoSendCheckbox:SetScript("OnClick", function()
             LogFilterGroup.autoSendWhisper = this:GetChecked()
             LogFilterGroup:SaveSettings()
@@ -1544,10 +1612,14 @@ function LogFilterGroup:UpdateSeparateWindow(windowType)
     local frame = getglobal(frameName)
     if not frame or not frame:IsVisible() then return end
 
-    -- Get filter text
+    -- Get filter text and exclude text
     local filterText = ""
+    local excludeText = ""
     if frame.filterInput then
         filterText = frame.filterInput:GetText()
+    end
+    if frame.excludeInput then
+        excludeText = frame.excludeInput:GetText()
     end
 
     local messages = {}
@@ -1561,8 +1633,8 @@ function LogFilterGroup:UpdateSeparateWindow(windowType)
     end
 
     for sender, data in pairs(sourceData) do
-        -- Apply filter
-        if MatchesFilter(data.message, filterText) then
+        -- Apply include filter and exclude filter (exclude checks both message and sender name)
+        if MatchesFilter(data.message, filterText) and not MatchesExclude(data.message, sender, excludeText) then
             table.insert(messages, {
                 sender = sender,
                 message = data.message,
