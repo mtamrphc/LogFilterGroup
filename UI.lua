@@ -97,7 +97,7 @@ function LogFilterGroup:ShowTabContextMenu(tabButton)
     if not LogFilterGroupTabContextMenu then
         local menu = CreateFrame("Frame", "LogFilterGroupTabContextMenu", UIParent)
         menu:SetWidth(120)
-        menu:SetHeight(60)
+        menu:SetHeight(90)
         menu:SetFrameStrata("FULLSCREEN_DIALOG")
         menu:SetFrameLevel(100)
         menu:SetBackdrop({
@@ -165,6 +165,30 @@ function LogFilterGroup:ShowTabContextMenu(tabButton)
         end)
         menu.deleteButton = deleteButton
 
+        -- Mute/Unmute button
+        local muteButton = CreateFrame("Button", nil, menu)
+        muteButton:SetWidth(110)
+        muteButton:SetHeight(20)
+        muteButton:SetPoint("TOP", deleteButton, "BOTTOM", 0, -2)
+        muteButton:EnableMouse(true)
+        muteButton:RegisterForClicks("LeftButtonUp")
+
+        local muteText = muteButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        muteText:SetPoint("CENTER", muteButton, "CENTER", 0, 0)
+        muteText:SetText("Mute")
+        muteButton.text = muteText
+
+        muteButton:SetScript("OnClick", function()
+            local tabId = menu.tabId
+            local tab = LogFilterGroup:GetTab(tabId)
+            if tab then
+                tab.muted = not tab.muted
+                LogFilterGroup:SaveSettings()
+            end
+            menu:Hide()
+        end)
+        menu.muteButton = muteButton
+
         -- Highlight on hover
         renameButton:SetScript("OnEnter", function()
             this:SetBackdrop({
@@ -190,10 +214,22 @@ function LogFilterGroup:ShowTabContextMenu(tabButton)
             this.text:SetTextColor(1, 1, 1, 1)
         end)
 
+        muteButton:SetScript("OnEnter", function()
+            this:SetBackdrop({
+                bgFile = "Interface\\Tooltips\\UI-Tooltip-Background"
+            })
+            this:SetBackdropColor(0.3, 0.3, 0.3, 1)
+            this.text:SetTextColor(1, 1, 0, 1)
+        end)
+        muteButton:SetScript("OnLeave", function()
+            this:SetBackdrop(nil)
+            this.text:SetTextColor(1, 1, 1, 1)
+        end)
+
         -- Close menu after a short delay if mouse leaves
         menu.mouseLeaveTime = nil
         menu:SetScript("OnUpdate", function(elapsed)
-            if not MouseIsOver(this) and not MouseIsOver(this.renameButton) and not MouseIsOver(this.deleteButton) then
+            if not MouseIsOver(this) and not MouseIsOver(this.renameButton) and not MouseIsOver(this.deleteButton) and not MouseIsOver(this.muteButton) then
                 if not this.mouseLeaveTime then
                     this.mouseLeaveTime = 0
                 else
@@ -210,6 +246,16 @@ function LogFilterGroup:ShowTabContextMenu(tabButton)
 
     local menu = LogFilterGroupTabContextMenu
     menu.tabId = tabButton.tabId
+
+    -- Update mute button text based on tab's muted state
+    local tab = self:GetTab(tabButton.tabId)
+    if tab then
+        if tab.muted then
+            menu.muteButton.text:SetText("Unmute")
+        else
+            menu.muteButton.text:SetText("Mute")
+        end
+    end
 
     -- Simple positioning - just put it near the mouse cursor
     local x, y = GetCursorPosition()
@@ -647,6 +693,14 @@ function LogFilterGroup:CreateFrame()
     -- Close button
     local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
+    closeButton:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_LEFT")
+        GameTooltip:SetText("Close Window")
+        GameTooltip:Show()
+    end)
+    closeButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
 
     -- Minimize button
     local minimizeButton = CreateFrame("Button", nil, frame)
@@ -661,11 +715,34 @@ function LogFilterGroup:CreateFrame()
     end)
     frame.minimizeButton = minimizeButton
 
+    -- Sound toggle button (global sound for all tabs)
+    local soundButton = CreateFrame("Button", nil, frame)
+    soundButton:SetWidth(16)
+    soundButton:SetHeight(16)
+    soundButton:SetPoint("RIGHT", minimizeButton, "LEFT", -2, 0)
+    soundButton:SetNormalTexture("Interface\\Icons\\Ability_Warrior_BattleShout")
+    soundButton:SetPushedTexture("Interface\\Icons\\Ability_Warrior_BattleShout")
+    soundButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+    soundButton:SetScript("OnClick", function()
+        LogFilterGroup.soundEnabled = not LogFilterGroup.soundEnabled
+        LogFilterGroup:SaveSettings()
+        LogFilterGroup:UpdateSoundButton()
+    end)
+    soundButton:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_LEFT")
+        GameTooltip:SetText("Toggle Sound Notifications\n|cFFFFFFFFPlay sound when messages arrive|r")
+        GameTooltip:Show()
+    end)
+    soundButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    frame.soundButton = soundButton
+
     -- Lock button (global lock for all tabs)
     local lockButton = CreateFrame("Button", nil, frame)
     lockButton:SetWidth(16)
     lockButton:SetHeight(16)
-    lockButton:SetPoint("RIGHT", minimizeButton, "LEFT", -2, 0)
+    lockButton:SetPoint("RIGHT", soundButton, "LEFT", -2, 0)
     lockButton:SetNormalTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Up")
     lockButton:SetPushedTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Down")
     lockButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
@@ -673,6 +750,14 @@ function LogFilterGroup:CreateFrame()
         LogFilterGroup.globalLocked = not LogFilterGroup.globalLocked
         LogFilterGroup:SaveSettings()
         LogFilterGroup:UpdateLockState()
+    end)
+    lockButton:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_LEFT")
+        GameTooltip:SetText("Toggle Filter Lock\n|cFFFFFFFFLock to hide filter inputs|r")
+        GameTooltip:Show()
+    end)
+    lockButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
     end)
     frame.lockButton = lockButton
 
@@ -687,16 +772,42 @@ function LogFilterGroup:CreateFrame()
     clearIconButton:GetHighlightTexture():SetAlpha(0.5)
 
     clearIconButton:SetScript("OnClick", function()
-        local parentFrame = this:GetParent()
-        if parentFrame.currentTab == "lfm" then
-            LogFilterGroup.lfmMessages = {}
-        elseif parentFrame.currentTab == "lfg" then
-            LogFilterGroup.lfgMessages = {}
-        else
-            LogFilterGroup.professionMessages = {}
+        -- Clear messages for the active tab
+        local tab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
+        if tab then
+            -- Clear this tab's message references
+            tab.messageRefs = {}
+
+            -- Also clean up orphaned messages from repository
+            -- (messages that are only referenced by this tab)
+            for messageId, msgData in pairs(LogFilterGroup.messageRepository) do
+                -- Remove this tab from the message's tab list
+                if msgData.tabs and msgData.tabs[tab.id] then
+                    msgData.tabs[tab.id] = nil
+
+                    -- If no other tabs reference this message, delete it from repository
+                    local hasOtherTabs = false
+                    for _ in pairs(msgData.tabs) do
+                        hasOtherTabs = true
+                        break
+                    end
+                    if not hasOtherTabs then
+                        LogFilterGroup.messageRepository[messageId] = nil
+                    end
+                end
+            end
+
+            LogFilterGroup:SaveData()
+            LogFilterGroup:UpdateDisplay()
         end
-        LogFilterGroup:SaveData()
-        LogFilterGroup:UpdateDisplay()
+    end)
+    clearIconButton:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_LEFT")
+        GameTooltip:SetText("Clear Messages\n|cFFFFFFFFRemove all messages from current tab|r")
+        GameTooltip:Show()
+    end)
+    clearIconButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
     end)
     frame.clearIconButton = clearIconButton
 
@@ -1325,8 +1436,34 @@ function LogFilterGroup:CheckAndFlashTab(tabId, sender, message)
 
     -- Apply same filter logic as UpdateDisplay
     if MatchesFilter(message, filterText) and not MatchesExclude(message, sender, excludeText) then
-        -- Message would be visible, flash the tab
-        self:FlashTab(tabId)
+        -- Flash tab and play sound only if tab is not muted
+        if not tab.muted then
+            -- Flash the tab
+            self:FlashTab(tabId)
+
+            -- Play sound if enabled globally
+            if self.soundEnabled then
+                PlaySound("AuctionWindowOpen")
+            end
+        end
+    end
+end
+
+-- Update sound button appearance based on soundEnabled state
+function LogFilterGroup:UpdateSoundButton()
+    local frame = LogFilterGroupFrame
+    if not frame then return end
+
+    if self.soundEnabled then
+        -- Sound is ON - show icon in full color
+        frame.soundButton:SetNormalTexture("Interface\\Icons\\Ability_Warrior_BattleShout")
+        frame.soundButton:SetPushedTexture("Interface\\Icons\\Ability_Warrior_BattleShout")
+        frame.soundButton:GetNormalTexture():SetVertexColor(1, 1, 1, 1)
+    else
+        -- Sound is OFF - show icon greyed out
+        frame.soundButton:SetNormalTexture("Interface\\Icons\\Ability_Warrior_BattleShout")
+        frame.soundButton:SetPushedTexture("Interface\\Icons\\Ability_Warrior_BattleShout")
+        frame.soundButton:GetNormalTexture():SetVertexColor(0.4, 0.4, 0.4, 1)
     end
 end
 
@@ -1419,28 +1556,34 @@ function LogFilterGroup:UpdateDisplay()
 
     local filterText = tab.filterText
     local excludeText = tab.excludeText
-    local sourceData = tab.messages
 
     if self.debugMode then
         local msgCount = 0
-        for _ in pairs(sourceData) do
-            msgCount = msgCount + 1
+        if tab.messageRefs then
+            for _ in pairs(tab.messageRefs) do
+                msgCount = msgCount + 1
+            end
         end
-        DEFAULT_CHAT_FRAME:AddMessage("DEBUG UpdateDisplay: Tab '" .. tab.name .. "' has " .. msgCount .. " messages in sourceData")
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG UpdateDisplay: Tab '" .. tab.name .. "' has " .. msgCount .. " message references")
     end
 
-    -- Collect and filter messages
+    -- Collect messages from central repository for this tab
     local messages = {}
-    for sender, data in pairs(sourceData) do
-        -- Apply include filter and exclude filter (exclude checks both message and sender name)
-        if MatchesFilter(data.message, filterText) and not MatchesExclude(data.message, sender, excludeText) then
-            table.insert(messages, {
-                sender = sender,
-                message = data.message,
-                timestamp = data.timestamp,
-                whispered = data.whispered or false,
-                invited = data.invited or false
-            })
+    if tab.messageRefs then
+        for messageId, metadata in pairs(tab.messageRefs) do
+            local msgData = LogFilterGroup.messageRepository[messageId]
+            if msgData then
+                -- Apply include filter and exclude filter (exclude checks both message and sender name)
+                if MatchesFilter(msgData.message, filterText) and not MatchesExclude(msgData.message, msgData.sender, excludeText) then
+                    table.insert(messages, {
+                        sender = msgData.sender,
+                        message = msgData.message,
+                        timestamp = msgData.timestamp,
+                        whispered = metadata.whispered or false,
+                        invited = metadata.invited or false
+                    })
+                end
+            end
         end
     end
 
@@ -1539,8 +1682,34 @@ function LogFilterGroup:UpdateDisplay()
                 local senderName = this:GetParent().senderName
                 if senderName then
                     local currentTab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
-                    if currentTab and currentTab.messages[senderName] then
-                        currentTab.messages[senderName] = nil
+                    if currentTab and currentTab.messageRefs then
+                        -- Find and remove the message from this sender
+                        for messageId, metadata in pairs(currentTab.messageRefs) do
+                            local msgData = LogFilterGroup.messageRepository[messageId]
+                            if msgData and msgData.sender == senderName then
+                                -- Remove from this tab's references
+                                currentTab.messageRefs[messageId] = nil
+
+                                -- Remove this tab from the message's tab list
+                                if msgData.tabs then
+                                    msgData.tabs[currentTab.id] = nil
+
+                                    -- If no other tabs reference this message, delete from repository
+                                    local hasOtherTabs = false
+                                    for _ in pairs(msgData.tabs) do
+                                        hasOtherTabs = true
+                                        break
+                                    end
+                                    if not hasOtherTabs then
+                                        LogFilterGroup.messageRepository[messageId] = nil
+                                    end
+                                end
+
+                                break
+                            end
+                        end
+
+                        LogFilterGroup:SaveData()
                         LogFilterGroup:UpdateDisplay()
                     end
                 end

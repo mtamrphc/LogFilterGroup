@@ -133,7 +133,7 @@ function LogFilterGroup:ParseMessage(sender, message)
         end
     end
 
-    -- Add to appropriate category (LFM takes priority, then LFG, then profession)
+    -- Add to appropriate default category (LFM takes priority, then LFG, then profession)
     if isLFM then
         self:AddMessage("lfm", sender, message)
         if self.debugMode then
@@ -152,6 +152,16 @@ function LogFilterGroup:ParseMessage(sender, message)
     else
         if self.debugMode then
             DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Message NOT categorized (no matching patterns)")
+        end
+    end
+
+    -- Also add ALL messages to custom tabs (filters will determine visibility)
+    for _, tab in ipairs(self.tabs) do
+        if not tab.isDefault then
+            self:AddMessage(tab.id, sender, message)
+            if self.debugMode then
+                DEFAULT_CHAT_FRAME:AddMessage("DEBUG: Added to custom tab '" .. tab.name .. "'")
+            end
         end
     end
 end

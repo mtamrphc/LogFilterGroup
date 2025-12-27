@@ -195,58 +195,53 @@ function LogFilterGroup:RestoreWindow(windowType)
         end
     end
 
-    -- Now update the display with proper data
-    if windowType == "main" then
-        if LogFilterGroup.UpdateDisplay then
-            LogFilterGroup:UpdateDisplay()
-        end
-    else
-        if LogFilterGroup.UpdateSeparateWindow then
-            LogFilterGroup:UpdateSeparateWindow(windowType)
-        end
-    end
-
     frame.statusText:Show()
     frame.resizeGrip:Show()
     frame.resizeButton:Show()
     frame.clearIconButton:Show()
 
-    -- Show filter label
-    if frame.filterLabel then
-        frame.filterLabel:Show()
-    end
+    -- Update lock state FIRST to show/hide filter inputs and reposition scroll frame
+    if windowType == "main" and LogFilterGroup.UpdateLockState then
+        LogFilterGroup:UpdateLockState()
+    else
+        -- For non-main windows, just show all inputs
+        -- Show filter label
+        if frame.filterLabel then
+            frame.filterLabel:Show()
+        end
 
-    -- Show filter help text
-    if frame.filterHelp then
-        frame.filterHelp:Show()
-    end
+        -- Show filter help text
+        if frame.filterHelp then
+            frame.filterHelp:Show()
+        end
 
-    -- Show filter inputs (main window has two, separate windows have one)
-    if frame.filterInput then
-        frame.filterInput:Show()
-    end
+        -- Show filter inputs (main window has two, separate windows have one)
+        if frame.filterInput then
+            frame.filterInput:Show()
+        end
 
-    -- Show exclude label
-    if frame.excludeLabel then
-        frame.excludeLabel:Show()
-    end
+        -- Show exclude label
+        if frame.excludeLabel then
+            frame.excludeLabel:Show()
+        end
 
-    -- Show exclude inputs (main window has two, separate windows have one)
-    if frame.excludeInput then
-        frame.excludeInput:Show()
-    end
+        -- Show exclude inputs (main window has two, separate windows have one)
+        if frame.excludeInput then
+            frame.excludeInput:Show()
+        end
 
-    -- Show auto-send checkbox and related elements
-    if frame.autoSendCheckbox then
-        frame.autoSendCheckbox:Show()
-    end
-    if frame.autoSendLabel then
-        frame.autoSendLabel:Show()
-    end
+        -- Show auto-send checkbox and related elements
+        if frame.autoSendCheckbox then
+            frame.autoSendCheckbox:Show()
+        end
+        if frame.autoSendLabel then
+            frame.autoSendLabel:Show()
+        end
 
-    -- Show whisper message input
-    if frame.whisperMsgInput then
-        frame.whisperMsgInput:Show()
+        -- Show whisper message input
+        if frame.whisperMsgInput then
+            frame.whisperMsgInput:Show()
+        end
     end
 
     -- Show dynamic tab buttons - need to restore their positions via RefreshTabButtons
@@ -274,6 +269,17 @@ function LogFilterGroup:RestoreWindow(windowType)
         end
         LogFilterGroup:MinimizeWindow(wType)
     end)
+
+    -- Now update the display with proper data AFTER lock state has been applied
+    if windowType == "main" then
+        if LogFilterGroup.UpdateDisplay then
+            LogFilterGroup:UpdateDisplay()
+        end
+    else
+        if LogFilterGroup.UpdateSeparateWindow then
+            LogFilterGroup:UpdateSeparateWindow(windowType)
+        end
+    end
 end
 
 -- Main window minimize/restore functions

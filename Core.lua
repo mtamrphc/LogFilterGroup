@@ -8,43 +8,52 @@ LogFilterGroup.mainWindowMinimized = false
 LogFilterGroup.mainWindowMinimizedTab = nil  -- Track which tab was active when main window minimized
 LogFilterGroup.debugMode = false  -- Debug mode off by default
 LogFilterGroup.globalLocked = false  -- Global lock state for all filter inputs
+LogFilterGroup.soundEnabled = true  -- Global sound notification toggle
+LogFilterGroup.messageRepository = {}  -- Centralized message storage (eliminates duplication)
+LogFilterGroup.nextMessageId = 1  -- Auto-incrementing ID for messages
 
 -- Database defaults
 local defaults = {
     globalLocked = false,
+    soundEnabled = true,
+    messageRepository = {},
+    nextMessageId = 1,
     tabs = {
         {
             id = "lfm",
             name = "Find Group",
-            messages = {},
+            messageRefs = {},  -- Changed from messages to messageRefs
             filterText = "",
             excludeText = "",
             whisperTemplate = "inv",
             autoSendWhisper = false,
             isDefault = true,
-            locked = false
+            locked = false,
+            muted = false
         },
         {
             id = "lfg",
             name = "Find Member",
-            messages = {},
+            messageRefs = {},  -- Changed from messages to messageRefs
             filterText = "",
             excludeText = "",
             whisperTemplate = "",
             autoSendWhisper = false,
             isDefault = true,
-            locked = false
+            locked = false,
+            muted = false
         },
         {
             id = "profession",
             name = "Professions",
-            messages = {},
+            messageRefs = {},  -- Changed from messages to messageRefs
             filterText = "",
             excludeText = "",
             whisperTemplate = "How much?",
             autoSendWhisper = false,
             isDefault = true,
-            locked = false
+            locked = false,
+            muted = false
         }
     },
     activeTabId = "lfm",
@@ -66,13 +75,14 @@ function LogFilterGroup:AddTab(name)
     local newTab = {
         id = "custom_" .. self.nextTabId,
         name = name or ("Tab " .. self.nextTabId),
-        messages = {},
+        messageRefs = {},  -- Changed from messages to messageRefs
         filterText = "",
         excludeText = "",
         whisperTemplate = "",
         autoSendWhisper = false,
         isDefault = false,
-        locked = false
+        locked = false,
+        muted = false
     }
     table.insert(self.tabs, newTab)
     self.nextTabId = self.nextTabId + 1
@@ -184,10 +194,60 @@ function LogFilterGroup:Initialize()
     self.activeTabId = LogFilterGroupDB.activeTabId or "lfm"
     self.nextTabId = LogFilterGroupDB.nextTabId or 1
     self.globalLocked = LogFilterGroupDB.globalLocked or false
+    self.soundEnabled = LogFilterGroupDB.soundEnabled
+    if self.soundEnabled == nil then
+        self.soundEnabled = true
+    end
+    self.messageRepository = LogFilterGroupDB.messageRepository or {}
+    self.nextMessageId = LogFilterGroupDB.nextMessageId or 1
+
+    -- Migrate old message structure to new one (if needed)
+    local migrated = false
+    for _, tab in ipairs(self.tabs) do
+        if tab.messages and not tab.messageRefs then
+            -- Old structure detected, convert to new format
+            if not migrated then
+                print("LogFilterGroup: Migrating message storage to new format...")
+                migrated = true
+            end
+
+            tab.messageRefs = {}
+
+            for sender, data in pairs(tab.messages) do
+                -- Create unique message ID
+                local messageId = "msg_" .. self.nextMessageId
+                self.nextMessageId = self.nextMessageId + 1
+
+                -- Store message in central repository
+                self.messageRepository[messageId] = {
+                    sender = sender,
+                    message = data.message,
+                    timestamp = data.timestamp,
+                    tabs = {[tab.id] = true}
+                }
+
+                -- Store per-tab metadata
+                tab.messageRefs[messageId] = {
+                    whispered = data.whispered or false,
+                    invited = data.invited or false
+                }
+            end
+
+            -- Remove old structure
+            tab.messages = nil
+        end
+    end
+
+    if migrated then
+        LogFilterGroupDB.messageRepository = self.messageRepository
+        LogFilterGroupDB.nextMessageId = self.nextMessageId
+        print("LogFilterGroup: Migration complete!")
+    end
 
     -- Clear old messages on load (start fresh each session)
+    self.messageRepository = {}
     for _, tab in ipairs(self.tabs) do
-        tab.messages = {}
+        tab.messageRefs = {}
     end
 
     -- Save the cleared state
@@ -202,12 +262,20 @@ function LogFilterGroup:CleanOldMessages()
     local maxAge = 300  -- 5 minutes (300 seconds)
     local cleaned = false
 
-    for _, tab in ipairs(self.tabs) do
-        for sender, data in pairs(tab.messages) do
-            if currentTime - data.timestamp > maxAge then
-                tab.messages[sender] = nil
-                cleaned = true
+    -- Clean central repository (single pass, no duplication)
+    for messageId, msgData in pairs(self.messageRepository) do
+        if currentTime - msgData.timestamp > maxAge then
+            -- Remove from all tabs' reference lists
+            for tabId, _ in pairs(msgData.tabs) do
+                local tab = self:GetTab(tabId)
+                if tab and tab.messageRefs then
+                    tab.messageRefs[messageId] = nil
+                end
             end
+
+            -- Delete from central repository
+            self.messageRepository[messageId] = nil
+            cleaned = true
         end
     end
 
@@ -228,25 +296,45 @@ function LogFilterGroup:AddMessage(tabId, sender, message)
         return
     end
 
-    -- Only update if message is new or different, preserve whispered/invited state
-    if not tab.messages[sender] then
-        tab.messages[sender] = {
+    -- Generate unique message ID (or find existing message from this sender)
+    local messageId = nil
+
+    -- Check if we already have a recent message from this sender with same content
+    for id, msgData in pairs(self.messageRepository) do
+        if msgData.sender == sender and msgData.message == message then
+            messageId = id
+            break
+        end
+    end
+
+    -- Create new message in central repository if not found
+    if not messageId then
+        messageId = "msg_" .. self.nextMessageId
+        self.nextMessageId = self.nextMessageId + 1
+
+        self.messageRepository[messageId] = {
+            sender = sender,
             message = message,
             timestamp = time(),
+            tabs = {}  -- Track which tabs this message belongs to
+        }
+    end
+
+    -- Add this tab to the message's tab list
+    self.messageRepository[messageId].tabs[tabId] = true
+
+    -- Store per-tab metadata (whispered/invited state) separately
+    if not tab.messageRefs then
+        tab.messageRefs = {}
+    end
+
+    if not tab.messageRefs[messageId] then
+        tab.messageRefs[messageId] = {
             whispered = false,
             invited = false
         }
-    else
-        -- Update message and timestamp but preserve whispered/invited state
-        local wasWhispered = tab.messages[sender].whispered or false
-        local wasInvited = tab.messages[sender].invited or false
-        tab.messages[sender] = {
-            message = message,
-            timestamp = time(),
-            whispered = wasWhispered,
-            invited = wasInvited
-        }
     end
+
     self:SaveData()
 
     -- Restore main window if minimized and this is the active tab
@@ -268,6 +356,8 @@ end
 -- Save data to saved variables
 function LogFilterGroup:SaveData()
     LogFilterGroupDB.tabs = self.tabs
+    LogFilterGroupDB.messageRepository = self.messageRepository
+    LogFilterGroupDB.nextMessageId = self.nextMessageId
 end
 
 -- Save settings to saved variables
@@ -276,47 +366,71 @@ function LogFilterGroup:SaveSettings()
     LogFilterGroupDB.activeTabId = self.activeTabId
     LogFilterGroupDB.nextTabId = self.nextTabId
     LogFilterGroupDB.globalLocked = self.globalLocked
+    LogFilterGroupDB.soundEnabled = self.soundEnabled
+    LogFilterGroupDB.messageRepository = self.messageRepository
+    LogFilterGroupDB.nextMessageId = self.nextMessageId
 end
 
 -- Mark a message as whispered
 function LogFilterGroup:MarkAsWhispered(tabId, sender)
     local tab = self:GetTab(tabId)
-    if tab and tab.messages[sender] then
-        tab.messages[sender].whispered = true
-        self:SaveData()
+    if not tab or not tab.messageRefs then return end
+
+    -- Find message from this sender in this tab
+    for messageId, metadata in pairs(tab.messageRefs) do
+        local msgData = self.messageRepository[messageId]
+        if msgData and msgData.sender == sender then
+            metadata.whispered = true
+            self:SaveData()
+            return
+        end
     end
 end
 
 -- Mark a message as invited
 function LogFilterGroup:MarkAsInvited(tabId, sender)
     local tab = self:GetTab(tabId)
-    if tab and tab.messages[sender] then
-        tab.messages[sender].invited = true
-        self:SaveData()
+    if not tab or not tab.messageRefs then return end
 
-        -- Track pending invite with timestamp
-        if not self.pendingInvites then
-            self.pendingInvites = {}
+    -- Find message from this sender in this tab
+    for messageId, metadata in pairs(tab.messageRefs) do
+        local msgData = self.messageRepository[messageId]
+        if msgData and msgData.sender == sender then
+            metadata.invited = true
+            self:SaveData()
+
+            -- Track pending invite with timestamp
+            if not self.pendingInvites then
+                self.pendingInvites = {}
+            end
+            self.pendingInvites[sender] = time()
+            return
         end
-        self.pendingInvites[sender] = time()
     end
 end
 
 -- Unmark a message as invited (when invite fails or is declined)
 function LogFilterGroup:UnmarkAsInvited(tabId, sender)
     local tab = self:GetTab(tabId)
-    if tab and tab.messages[sender] then
-        tab.messages[sender].invited = false
-        self:SaveData()
+    if not tab or not tab.messageRefs then return end
 
-        -- Clear pending invite
-        if self.pendingInvites then
-            self.pendingInvites[sender] = nil
-        end
+    -- Find message from this sender in this tab
+    for messageId, metadata in pairs(tab.messageRefs) do
+        local msgData = self.messageRepository[messageId]
+        if msgData and msgData.sender == sender then
+            metadata.invited = false
+            self:SaveData()
 
-        -- Update display if visible
-        if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
-            self:UpdateDisplay()
+            -- Clear pending invite
+            if self.pendingInvites then
+                self.pendingInvites[sender] = nil
+            end
+
+            -- Update display if visible
+            if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
+                self:UpdateDisplay()
+            end
+            return
         end
     end
 end
@@ -448,8 +562,9 @@ end)
 SLASH_LOGFILTERGROUP1 = "/lfg"
 SlashCmdList["LOGFILTERGROUP"] = function(msg)
     if msg == "clear" then
+        LogFilterGroup.messageRepository = {}
         for _, tab in ipairs(LogFilterGroup.tabs) do
-            tab.messages = {}
+            tab.messageRefs = {}
         end
         LogFilterGroup:SaveData()
         print("LogFilterGroup: All messages cleared.")
