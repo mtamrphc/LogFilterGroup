@@ -548,7 +548,7 @@ local function StripLinks(message)
 end
 
 -- Parse and evaluate filter expression with AND/OR logic and parentheses
-local function MatchesFilter(message, filterText)
+function LogFilterGroup.MatchesFilter(message, filterText)
     if not filterText or filterText == "" then
         return true
     end
@@ -656,18 +656,18 @@ end
 
 -- Helper function to check if a message should be excluded based on exclude filter
 -- Checks both message content and sender name
-local function MatchesExclude(message, sender, excludeText)
+function LogFilterGroup.MatchesExclude(message, sender, excludeText)
     if not excludeText or excludeText == "" then
         return false  -- No exclude filter means don't exclude
     end
 
     -- Check if the exclude filter matches the message content
-    if MatchesFilter(message, excludeText) then
+    if LogFilterGroup.MatchesFilter(message, excludeText) then
         return true
     end
 
     -- Check if the exclude filter matches the sender name
-    if MatchesFilter(sender, excludeText) then
+    if LogFilterGroup.MatchesFilter(sender, excludeText) then
         return true
     end
 
@@ -728,12 +728,20 @@ function LogFilterGroup:CreateFrame()
     local minimizeButton = CreateFrame("Button", nil, frame)
     minimizeButton:SetWidth(16)
     minimizeButton:SetHeight(16)
-    minimizeButton:SetPoint("RIGHT", closeButton, "LEFT", -2, 0)
+    minimizeButton:SetPoint("RIGHT", closeButton, "LEFT", -2, 2)
     minimizeButton:SetNormalTexture("Interface\\Buttons\\UI-MinusButton-Up")
     minimizeButton:SetPushedTexture("Interface\\Buttons\\UI-MinusButton-Down")
     minimizeButton:SetHighlightTexture("Interface\\Buttons\\UI-PlusButton-Hilight")
     minimizeButton:SetScript("OnClick", function()
-        LogFilterGroup:MinimizeMainWindow()
+        LogFilterGroup:EnterTinyMode()
+    end)
+    minimizeButton:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_LEFT")
+        GameTooltip:SetText("Tiny Mode\n|cFFFFFFFFCompact view with just player names|r")
+        GameTooltip:Show()
+    end)
+    minimizeButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
     end)
     frame.minimizeButton = minimizeButton
 
@@ -1118,9 +1126,13 @@ function LogFilterGroup:CreateFrame()
     end)
     frame.resizeButton = resizeButton
 
-    -- Handle resize to update display
+    -- Handle resize to update display and maintain lock state
     frame:SetScript("OnSizeChanged", function()
         if frame:IsVisible() then
+            -- Update lock state first to reposition scroll frame
+            LogFilterGroup:UpdateLockState()
+            -- Then refresh tabs and display
+            LogFilterGroup:RefreshTabButtons()
             LogFilterGroup:UpdateDisplay()
         end
     end)
@@ -1138,11 +1150,6 @@ function LogFilterGroup:CreateFrame()
 
     -- Create initial tab buttons
     self:RefreshTabButtons()
-
-    -- Refresh tabs on window resize
-    frame:SetScript("OnSizeChanged", function()
-        LogFilterGroup:RefreshTabButtons()
-    end)
 
     -- Show initial tab
     self:ShowTab(self.activeTabId)
@@ -1309,6 +1316,9 @@ function LogFilterGroup:RefreshTabButtons()
     local TAB_ROW_HEIGHT = TAB_HEIGHT + TAB_SPACING
     local contentYOffset = -(28 + (numRows * TAB_ROW_HEIGHT) + 5)  -- 28 = initial offset, 5 = spacing
 
+    -- Store contentYOffset for use in UpdateLockState
+    frame.contentYOffset = contentYOffset
+
     -- Update positions of filter elements
     if frame.filterLabel then
         frame.filterLabel:ClearAllPoints()
@@ -1327,7 +1337,14 @@ function LogFilterGroup:RefreshTabButtons()
 
     if frame.scrollFrame then
         frame.scrollFrame:ClearAllPoints()
-        frame.scrollFrame:SetPoint("TOPLEFT", frame.autoSendCheckbox, "BOTTOMLEFT", 8, -10)
+        -- Position scroll frame based on lock state
+        if self.globalLocked then
+            -- When locked, position at contentYOffset (where filters would be)
+            frame.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, contentYOffset)
+        else
+            -- When unlocked, position below autoSendCheckbox
+            frame.scrollFrame:SetPoint("TOPLEFT", frame.autoSendCheckbox, "BOTTOMLEFT", 8, -10)
+        end
         frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
     end
 
@@ -1384,9 +1401,10 @@ function LogFilterGroup:UpdateLockState()
         frame.autoSendLabel:Hide()
         frame.whisperMsgInput:Hide()
 
-        -- Expand scroll frame to use the full space
+        -- Expand scroll frame to use the full space (use dynamic contentYOffset)
         frame.scrollFrame:ClearAllPoints()
-        frame.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -55)
+        local yOffset = frame.contentYOffset or -55  -- Use stored offset or fallback to -55
+        frame.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, yOffset)
         frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
     else
         -- Show all filter-related elements
@@ -1456,14 +1474,18 @@ function LogFilterGroup:CheckAndFlashTab(tabId, sender, message)
     local excludeText = tab.excludeText
 
     -- Apply same filter logic as UpdateDisplay
-    if MatchesFilter(message, filterText) and not MatchesExclude(message, sender, excludeText) then
+    if LogFilterGroup.MatchesFilter(message, filterText) and not LogFilterGroup.MatchesExclude(message, sender, excludeText) then
         -- Flash tab and play sound only if tab is not muted
         if not tab.muted then
-            -- Flash the tab
-            self:FlashTab(tabId)
+            -- Flash the tab (only for inactive tabs)
+            if tabId ~= self.activeTabId then
+                self:FlashTab(tabId)
+            end
 
-            -- Play sound only if enabled globally AND the window is open
-            if self.soundEnabled and LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
+            -- Play sound only if enabled globally AND either window is open
+            local isWindowOpen = (LogFilterGroupFrame and LogFilterGroupFrame:IsVisible()) or
+                               (LogFilterGroupTinyFrame and LogFilterGroupTinyFrame:IsVisible())
+            if self.soundEnabled and isWindowOpen then
                 PlaySound("AuctionWindowOpen")
             end
         end
@@ -1595,7 +1617,7 @@ function LogFilterGroup:UpdateDisplay()
             local msgData = LogFilterGroup.messageRepository[messageId]
             if msgData then
                 -- Apply include filter and exclude filter (exclude checks both message and sender name)
-                if MatchesFilter(msgData.message, filterText) and not MatchesExclude(msgData.message, msgData.sender, excludeText) then
+                if LogFilterGroup.MatchesFilter(msgData.message, filterText) and not LogFilterGroup.MatchesExclude(msgData.message, msgData.sender, excludeText) then
                     table.insert(messages, {
                         sender = msgData.sender,
                         message = msgData.message,

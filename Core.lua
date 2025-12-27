@@ -342,14 +342,19 @@ function LogFilterGroup:AddMessage(tabId, sender, message)
         self:RestoreMainWindow()
     end
 
-    -- Check if message passes filters and flash tab if needed (only for inactive tabs)
-    if LogFilterGroupFrame and tabId ~= self.activeTabId then
+    -- Check if message passes filters and flash tab if needed
+    if LogFilterGroupFrame then
         self:CheckAndFlashTab(tabId, sender, message)
     end
 
     -- Update display if frame exists
     if LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
         self:UpdateDisplay()
+    end
+
+    -- Also update Tiny Mode if it's visible
+    if LogFilterGroupTinyFrame and LogFilterGroupTinyFrame:IsVisible() then
+        self:UpdateTinyDisplay()
     end
 end
 
