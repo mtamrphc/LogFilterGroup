@@ -184,6 +184,11 @@ function LogFilterGroup:ShowTabContextMenu(tabButton)
             if tab then
                 tab.muted = not tab.muted
                 LogFilterGroup:SaveSettings()
+
+                -- Stop tab flashing when muted
+                if tab.muted then
+                    LogFilterGroup:StopFlashingTab(tabId)
+                end
             end
             menu:Hide()
         end)
@@ -254,6 +259,23 @@ function LogFilterGroup:ShowTabContextMenu(tabButton)
             menu.muteButton.text:SetText("Unmute")
         else
             menu.muteButton.text:SetText("Mute")
+        end
+
+        -- Show/hide rename and delete buttons based on whether this is a default tab
+        if tab.isDefault then
+            -- Default tabs: hide rename and delete, only show mute
+            menu.renameButton:Hide()
+            menu.deleteButton:Hide()
+            menu.muteButton:ClearAllPoints()
+            menu.muteButton:SetPoint("TOP", menu, "TOP", 0, -8)
+            menu:SetHeight(35)  -- Smaller height for just one button
+        else
+            -- Custom tabs: show all buttons
+            menu.renameButton:Show()
+            menu.deleteButton:Show()
+            menu.muteButton:ClearAllPoints()
+            menu.muteButton:SetPoint("TOP", menu.deleteButton, "BOTTOM", 0, -2)
+            menu:SetHeight(90)  -- Full height for all buttons
         end
     end
 
@@ -1224,9 +1246,8 @@ function LogFilterGroup:RefreshTabButtons()
         end
 
         tabButton.rightClickHandler = function()
-            if not tabButton.isDefault then
-                LogFilterGroup:ShowTabContextMenu(tabButton)
-            end
+            -- Allow right-click menu for all tabs (default and custom)
+            LogFilterGroup:ShowTabContextMenu(tabButton)
         end
 
         -- Left click to switch tabs, right click for menu
@@ -1240,7 +1261,7 @@ function LogFilterGroup:RefreshTabButtons()
 
         -- Also handle mouse down for better responsiveness
         tabButton:SetScript("OnMouseDown", function()
-            if arg1 == "RightButton" and not this.isDefault then
+            if arg1 == "RightButton" then
                 this.rightClickHandler()
             end
         end)
@@ -1441,8 +1462,8 @@ function LogFilterGroup:CheckAndFlashTab(tabId, sender, message)
             -- Flash the tab
             self:FlashTab(tabId)
 
-            -- Play sound if enabled globally
-            if self.soundEnabled then
+            -- Play sound only if enabled globally AND the window is open
+            if self.soundEnabled and LogFilterGroupFrame and LogFilterGroupFrame:IsVisible() then
                 PlaySound("AuctionWindowOpen")
             end
         end
