@@ -1,4 +1,4 @@
-# GroupFinder - WoW 1.12 Addon
+# LogFilterGroup - WoW 1.12 Addon
 
 A comprehensive chat parser addon for World of Warcraft 1.12 that automatically organizes LFG/LFM dungeon groups and profession service requests from chat channels.
 
