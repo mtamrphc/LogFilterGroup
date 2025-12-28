@@ -685,7 +685,24 @@ function LogFilterGroup:CreateFrame()
     local frame = CreateFrame("Frame", "LogFilterGroupFrame", UIParent)
     frame:SetWidth(FRAME_WIDTH)
     frame:SetHeight(FRAME_HEIGHT)
-    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+
+    -- Restore saved position and size, or default to center
+    if self.mainFramePosition then
+        frame:SetPoint(
+            self.mainFramePosition.point,
+            UIParent,
+            self.mainFramePosition.point,
+            self.mainFramePosition.xOfs,
+            self.mainFramePosition.yOfs
+        )
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    end
+
+    if self.mainFrameSize then
+        frame:SetWidth(self.mainFrameSize.width)
+        frame:SetHeight(self.mainFrameSize.height)
+    end
     frame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -704,7 +721,10 @@ function LogFilterGroup:CreateFrame()
     frame:SetClampedToScreen(true)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function() this:StartMoving() end)
-    frame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
+    frame:SetScript("OnDragStop", function()
+        this:StopMovingOrSizing()
+        LogFilterGroup:SaveMainFramePosition()
+    end)
     frame:Hide()
 
     -- Title
@@ -1134,6 +1154,9 @@ function LogFilterGroup:CreateFrame()
             -- Then refresh tabs and display
             LogFilterGroup:RefreshTabButtons()
             LogFilterGroup:UpdateDisplay()
+
+            -- Save the new size
+            LogFilterGroup:SaveMainFramePosition()
         end
     end)
 

@@ -16,7 +16,19 @@ function LogFilterGroup:CreateTinyModeFrame()
     local frame = CreateFrame("Frame", "LogFilterGroupTinyFrame", UIParent)
     frame:SetWidth(200)
     frame:SetHeight(30 + (TINY_ROW_HEIGHT * TINY_ROWS_VISIBLE))
-    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+
+    -- Restore saved position, or default to center
+    if self.tinyFramePosition then
+        frame:SetPoint(
+            self.tinyFramePosition.point,
+            UIParent,
+            self.tinyFramePosition.point,
+            self.tinyFramePosition.xOfs,
+            self.tinyFramePosition.yOfs
+        )
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    end
     frame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -32,7 +44,10 @@ function LogFilterGroup:CreateTinyModeFrame()
     frame:SetClampedToScreen(true)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function() this:StartMoving() end)
-    frame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
+    frame:SetScript("OnDragStop", function()
+        this:StopMovingOrSizing()
+        LogFilterGroup:SaveTinyFramePosition()
+    end)
     frame:SetFrameStrata("MEDIUM")
     frame:Hide()
 

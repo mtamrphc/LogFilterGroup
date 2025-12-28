@@ -57,7 +57,12 @@ local defaults = {
         }
     },
     activeTabId = "lfm",
-    nextTabId = 1
+    nextTabId = 1,
+
+    -- Window position data
+    mainFramePosition = nil,  -- Will store {point, xOfs, yOfs}
+    mainFrameSize = nil,      -- Will store {width, height}
+    tinyFramePosition = nil   -- Will store {point, xOfs, yOfs}
 }
 
 -- Find tab by ID
@@ -200,6 +205,11 @@ function LogFilterGroup:Initialize()
     end
     self.messageRepository = LogFilterGroupDB.messageRepository or {}
     self.nextMessageId = LogFilterGroupDB.nextMessageId or 1
+
+    -- Load window positions
+    self.mainFramePosition = LogFilterGroupDB.mainFramePosition
+    self.mainFrameSize = LogFilterGroupDB.mainFrameSize
+    self.tinyFramePosition = LogFilterGroupDB.tinyFramePosition
 
     -- Migrate old message structure to new one (if needed)
     local migrated = false
@@ -374,6 +384,48 @@ function LogFilterGroup:SaveSettings()
     LogFilterGroupDB.soundEnabled = self.soundEnabled
     LogFilterGroupDB.messageRepository = self.messageRepository
     LogFilterGroupDB.nextMessageId = self.nextMessageId
+
+    -- Save window positions
+    LogFilterGroupDB.mainFramePosition = self.mainFramePosition
+    LogFilterGroupDB.mainFrameSize = self.mainFrameSize
+    LogFilterGroupDB.tinyFramePosition = self.tinyFramePosition
+end
+
+-- Save main frame position and size
+function LogFilterGroup:SaveMainFramePosition()
+    local frame = LogFilterGroupFrame
+    if not frame then return end
+
+    -- Get position
+    local point, relativeTo, relativePoint, xOfs, yOfs = frame:GetPoint()
+    self.mainFramePosition = {
+        point = point,
+        xOfs = xOfs,
+        yOfs = yOfs
+    }
+
+    -- Get size
+    self.mainFrameSize = {
+        width = frame:GetWidth(),
+        height = frame:GetHeight()
+    }
+
+    self:SaveSettings()
+end
+
+-- Save tiny frame position
+function LogFilterGroup:SaveTinyFramePosition()
+    local frame = LogFilterGroupTinyFrame
+    if not frame then return end
+
+    local point, relativeTo, relativePoint, xOfs, yOfs = frame:GetPoint()
+    self.tinyFramePosition = {
+        point = point,
+        xOfs = xOfs,
+        yOfs = yOfs
+    }
+
+    self:SaveSettings()
 end
 
 -- Mark a message as whispered
