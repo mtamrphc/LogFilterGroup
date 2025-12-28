@@ -612,7 +612,7 @@ function LogFilterGroup.TruncateMessage(message, maxWidth)
 end
 
 -- Helper function to evaluate a simple expression (no parentheses)
-local function EvaluateSimpleExpression(message, expression, quoteMappings)
+local function EvaluateSimpleExpression(message, expression, quoteMappings, placeholderResults)
     local lowerMessage = string.lower(message)
     local lowerExpr = string.lower(expression)
 
@@ -621,6 +621,11 @@ local function EvaluateSimpleExpression(message, expression, quoteMappings)
 
     if lowerExpr == "" then
         return true
+    end
+
+    -- Check if this is a placeholder reference
+    if placeholderResults and placeholderResults[expression] ~= nil then
+        return placeholderResults[expression]
     end
 
     -- Check for OR operator (lower precedence)
@@ -645,7 +650,7 @@ local function EvaluateSimpleExpression(message, expression, quoteMappings)
 
         -- At least one OR term must match
         for _, term in ipairs(orTerms) do
-            if EvaluateSimpleExpression(message, term, quoteMappings) then
+            if EvaluateSimpleExpression(message, term, quoteMappings, placeholderResults) then
                 return true
             end
         end
@@ -674,9 +679,18 @@ local function EvaluateSimpleExpression(message, expression, quoteMappings)
         -- All AND terms must match
         for _, term in ipairs(andTerms) do
             term = string.gsub(term, "^%s*(.-)%s*$", "%1")
-            -- Use new match type processing
-            local matchData = ProcessMatchTypes(term, quoteMappings)
-            if not PerformMatch(message, matchData.matchType, matchData.searchTerm) then
+
+            -- Check if AND term is a placeholder
+            local termResult
+            if placeholderResults and placeholderResults[term] ~= nil then
+                termResult = placeholderResults[term]
+            else
+                -- Use new match type processing
+                local matchData = ProcessMatchTypes(term, quoteMappings)
+                termResult = PerformMatch(message, matchData.matchType, matchData.searchTerm)
+            end
+
+            if not termResult then
                 return false
             end
         end
@@ -737,8 +751,8 @@ function LogFilterGroup.MatchesFilter(message, filterText)
         -- Extract expression inside parentheses (without the parentheses)
         local innerExpr = string.sub(lowerFilter, startPos + 1, endPos - 1)
 
-        -- Evaluate the inner expression with quote mappings
-        local result = EvaluateSimpleExpression(message, innerExpr, quoteMappings)
+        -- Evaluate the inner expression with quote mappings and placeholder results
+        local result = EvaluateSimpleExpression(message, innerExpr, quoteMappings, placeholderResults)
 
         -- Create a unique placeholder
         placeholderCount = placeholderCount + 1
@@ -1085,8 +1099,8 @@ function LogFilterGroup:CreateFrame()
     -- Filter input box (shared by all tabs)
     local filterInput = CreateFrame("EditBox", "LogFilterGroupFilterInput", frame)
     filterInput:SetHeight(20)
+    filterInput:SetWidth(200)  -- Fixed width to avoid recalculation during resize
     filterInput:SetPoint("LEFT", filterLabel, "RIGHT", 3, 0)
-    filterInput:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     filterInput:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1125,8 +1139,8 @@ function LogFilterGroup:CreateFrame()
     -- Exclude input box (shared by all tabs)
     local excludeInput = CreateFrame("EditBox", "LogFilterGroupExcludeInput", frame)
     excludeInput:SetHeight(20)
+    excludeInput:SetWidth(200)  -- Fixed width to avoid recalculation during resize
     excludeInput:SetPoint("LEFT", excludeLabel, "RIGHT", 3, 0)
-    excludeInput:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     excludeInput:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1178,8 +1192,8 @@ function LogFilterGroup:CreateFrame()
     -- Whisper message input box (shared by all tabs)
     local whisperMsgInput = CreateFrame("EditBox", "LogFilterGroupWhisperMsgInput", frame)
     whisperMsgInput:SetHeight(20)
+    whisperMsgInput:SetWidth(200)  -- Fixed width to avoid recalculation during resize
     whisperMsgInput:SetPoint("LEFT", autoSendLabel, "RIGHT", 5, 0)
-    whisperMsgInput:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     whisperMsgInput:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1368,44 +1382,82 @@ function LogFilterGroup:CreateFrame()
     frame.resizeButton = resizeButton
 
     -- Handle resize to update display and maintain lock state
-    -- Throttle to avoid performance issues during resize dragging
-    local resizeTimer = 0
-
-    -- Timer to handle delayed resize updates
-    frame.resizeUpdateTimer = function(elapsed)
-        if resizeTimer > 0 then
-            resizeTimer = resizeTimer - elapsed
-            if resizeTimer <= 0 then
-                resizeTimer = 0
-                -- Resize has stopped, now update everything
-                LogFilterGroup:UpdateLockState()
-                LogFilterGroup:RefreshTabButtons()
-                LogFilterGroup:UpdateDisplay()
-                LogFilterGroup:SaveMainFramePosition()
-
-                -- Disable OnUpdate now that resize is complete
-                frame:SetScript("OnUpdate", nil)
-            end
-        end
-    end
+    -- Completely disable OnSizeChanged processing during resize for maximum performance
+    local isResizing = false
 
     frame:SetScript("OnSizeChanged", function()
-        if frame:IsVisible() then
-            -- Schedule all updates for later to avoid lag during resize
-            resizeTimer = 0.15  -- Wait 0.15 seconds after resize stops
+        -- Do nothing during resize - we'll update when mouse is released
+    end)
 
-            -- Enable OnUpdate only during resize
-            frame:SetScript("OnUpdate", function(elapsed)
-                frame.resizeUpdateTimer(arg1 or 0)
-            end)
-        end
+    -- Override the resize button to handle updates manually
+    resizeButton:SetScript("OnMouseDown", function()
+        resizeGrip:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+        frame:StartSizing("BOTTOMRIGHT")
+        isResizing = true
+    end)
+
+    resizeButton:SetScript("OnMouseUp", function()
+        frame:StopMovingOrSizing()
+        resizeGrip:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+        isResizing = false
+
+        -- Now update everything after resize completes
+        LogFilterGroup:UpdateEditBoxWidths()  -- Update EditBox widths first
+        LogFilterGroup:UpdateLockState()
+        LogFilterGroup:UpdateDisplay()
+        LogFilterGroup:SaveMainFramePosition()
     end)
 
     -- Create initial tab buttons
     self:RefreshTabButtons()
 
+    -- Set initial EditBox widths based on frame size
+    self:UpdateEditBoxWidths()
+
     -- Show initial tab
     self:ShowTab(self.activeTabId)
+end
+
+-- Update EditBox widths based on current frame width
+function LogFilterGroup:UpdateEditBoxWidths()
+    local frame = LogFilterGroupFrame
+    if not frame then
+        return
+    end
+
+    local frameWidth = frame:GetWidth()
+    local rightMargin = 8  -- Space from right edge
+
+    -- Calculate width for each EditBox based on its actual position
+    if frame.filterInput then
+        local left = frame.filterInput:GetLeft()
+        local frameLeft = frame:GetLeft()
+        if left and frameLeft then
+            local offsetFromLeft = left - frameLeft
+            local availableWidth = frameWidth - offsetFromLeft - rightMargin
+            frame.filterInput:SetWidth(math.max(150, availableWidth))
+        end
+    end
+
+    if frame.excludeInput then
+        local left = frame.excludeInput:GetLeft()
+        local frameLeft = frame:GetLeft()
+        if left and frameLeft then
+            local offsetFromLeft = left - frameLeft
+            local availableWidth = frameWidth - offsetFromLeft - rightMargin
+            frame.excludeInput:SetWidth(math.max(150, availableWidth))
+        end
+    end
+
+    if frame.whisperMsgInput then
+        local left = frame.whisperMsgInput:GetLeft()
+        local frameLeft = frame:GetLeft()
+        if left and frameLeft then
+            local offsetFromLeft = left - frameLeft
+            local availableWidth = frameWidth - offsetFromLeft - rightMargin
+            frame.whisperMsgInput:SetWidth(math.max(150, availableWidth))
+        end
+    end
 end
 
 -- Refresh tab buttons (create/recreate dynamic tabs)
@@ -1588,18 +1640,8 @@ function LogFilterGroup:RefreshTabButtons()
         frame.autoSendCheckbox:SetPoint("TOPLEFT", frame.excludeLabel, "BOTTOMLEFT", 0, -7)
     end
 
-    if frame.scrollFrame then
-        frame.scrollFrame:ClearAllPoints()
-        -- Position scroll frame based on lock state
-        if self.globalLocked then
-            -- When locked, position at contentYOffset (where filters would be)
-            frame.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, contentYOffset)
-        else
-            -- When unlocked, position below autoSendCheckbox
-            frame.scrollFrame:SetPoint("TOPLEFT", frame.autoSendCheckbox, "BOTTOMLEFT", 8, -10)
-        end
-        frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
-    end
+    -- Scroll frame position is now fixed during creation - no need to reposition here
+    -- This eliminates expensive layout recalculations during resize
 
     -- Update active tab appearance
     self:UpdateTabAppearance()
@@ -1654,11 +1696,8 @@ function LogFilterGroup:UpdateLockState()
         frame.autoSendLabel:Hide()
         frame.whisperMsgInput:Hide()
 
-        -- Expand scroll frame to use the full space (use dynamic contentYOffset)
-        frame.scrollFrame:ClearAllPoints()
-        local yOffset = frame.contentYOffset or -55  -- Use stored offset or fallback to -55
-        frame.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, yOffset)
-        frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
+        -- Scroll frame uses fixed position - no repositioning needed
+        -- This prevents expensive layout recalculations during resize
     else
         -- Show all filter-related elements
         frame.filterLabel:Show()
@@ -1675,10 +1714,8 @@ function LogFilterGroup:UpdateLockState()
         frame.autoSendLabel:Show()
         frame.whisperMsgInput:Show()
 
-        -- Restore scroll frame to normal position (below the auto-send checkbox)
-        frame.scrollFrame:ClearAllPoints()
-        frame.scrollFrame:SetPoint("TOPLEFT", frame.autoSendCheckbox, "BOTTOMLEFT", 8, -10)
-        frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
+        -- Scroll frame uses fixed position - no repositioning needed
+        -- This prevents expensive layout recalculations during resize
     end
 end
 
