@@ -157,9 +157,18 @@ function LogFilterGroup:ShowTabContextMenu(tabButton)
 
         deleteButton:SetScript("OnClick", function()
             local tabId = menu.tabId
+            local wasActiveTab = (LogFilterGroup.activeTabId == tabId)
+
             if LogFilterGroup:DeleteTab(tabId) then
                 LogFilterGroup:RefreshTabButtons()
-                LogFilterGroup:UpdateDisplay()
+
+                -- If we deleted the active tab, ShowTab will properly load the new active tab's settings
+                if wasActiveTab then
+                    LogFilterGroup:ShowTab(LogFilterGroup.activeTabId)
+                else
+                    -- Otherwise just update the display
+                    LogFilterGroup:UpdateDisplay()
+                end
             end
             menu:Hide()
         end)
@@ -1093,6 +1102,11 @@ function LogFilterGroup:CreateFrame()
     filterInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
     filterInput:SetScript("OnEnterPressed", function() this:ClearFocus() end)
     filterInput:SetScript("OnTextChanged", function()
+        -- Skip if we're programmatically updating the inputs
+        if LogFilterGroup.updatingTabInputs then
+            return
+        end
+
         local tab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
         if tab then
             tab.filterText = this:GetText()
@@ -1128,6 +1142,11 @@ function LogFilterGroup:CreateFrame()
     excludeInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
     excludeInput:SetScript("OnEnterPressed", function() this:ClearFocus() end)
     excludeInput:SetScript("OnTextChanged", function()
+        -- Skip if we're programmatically updating the inputs
+        if LogFilterGroup.updatingTabInputs then
+            return
+        end
+
         local tab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
         if tab then
             tab.excludeText = this:GetText()
@@ -1349,27 +1368,36 @@ function LogFilterGroup:CreateFrame()
     frame.resizeButton = resizeButton
 
     -- Handle resize to update display and maintain lock state
+    -- Throttle to avoid performance issues during resize dragging
+    local resizeTimer = 0
+
+    -- Timer to handle delayed resize updates
+    frame.resizeUpdateTimer = function(elapsed)
+        if resizeTimer > 0 then
+            resizeTimer = resizeTimer - elapsed
+            if resizeTimer <= 0 then
+                resizeTimer = 0
+                -- Resize has stopped, now update everything
+                LogFilterGroup:UpdateLockState()
+                LogFilterGroup:RefreshTabButtons()
+                LogFilterGroup:UpdateDisplay()
+                LogFilterGroup:SaveMainFramePosition()
+
+                -- Disable OnUpdate now that resize is complete
+                frame:SetScript("OnUpdate", nil)
+            end
+        end
+    end
+
     frame:SetScript("OnSizeChanged", function()
         if frame:IsVisible() then
-            -- Update lock state first to reposition scroll frame
-            LogFilterGroup:UpdateLockState()
-            -- Then refresh tabs and display
-            LogFilterGroup:RefreshTabButtons()
-            LogFilterGroup:UpdateDisplay()
+            -- Schedule all updates for later to avoid lag during resize
+            resizeTimer = 0.15  -- Wait 0.15 seconds after resize stops
 
-            -- Save the new size
-            LogFilterGroup:SaveMainFramePosition()
-        end
-    end)
-
-    -- Update timer
-    frame:SetScript("OnUpdate", function()
-        if not this:IsVisible() then return end
-
-        local now = GetTime()
-        if now - LogFilterGroup.lastUpdate > 1 then
-            LogFilterGroup.lastUpdate = now
-            LogFilterGroup:UpdateDisplay()
+            -- Enable OnUpdate only during resize
+            frame:SetScript("OnUpdate", function(elapsed)
+                frame.resizeUpdateTimer(arg1 or 0)
+            end)
         end
     end)
 
@@ -1673,10 +1701,16 @@ function LogFilterGroup:ShowTab(tabId)
     -- Update input fields with current tab's settings
     local tab = self:GetTab(tabId)
     if tab then
-        frame.filterInput:SetText(tab.filterText)
-        frame.excludeInput:SetText(tab.excludeText)
-        frame.whisperMsgInput:SetText(tab.whisperTemplate)
+        -- Set flag to prevent OnTextChanged from saving during programmatic updates
+        self.updatingTabInputs = true
+
+        frame.filterInput:SetText(tab.filterText or "")
+        frame.excludeInput:SetText(tab.excludeText or "")
+        frame.whisperMsgInput:SetText(tab.whisperTemplate or "")
         frame.autoSendCheckbox:SetChecked(tab.autoSendWhisper)
+
+        -- Clear flag
+        self.updatingTabInputs = false
     end
 
     -- Update lock state
@@ -2063,14 +2097,36 @@ end
 function LogFilterGroup:ToggleFrame()
     if not LogFilterGroupFrame then
         self:CreateFrame()
+
+        -- Restore Tiny mode state if user was in Tiny mode
+        if self.inTinyMode then
+            self:EnterTinyMode()
+            return
+        end
     end
 
-    if LogFilterGroupFrame:IsVisible() then
-        LogFilterGroupFrame:Hide()
+    -- Check if user is in Tiny mode
+    if self.inTinyMode then
+        -- Toggle Tiny frame instead
+        if LogFilterGroupTinyFrame and LogFilterGroupTinyFrame:IsVisible() then
+            LogFilterGroupTinyFrame:Hide()
+        else
+            if not LogFilterGroupTinyFrame then
+                self:EnterTinyMode()
+            else
+                LogFilterGroupTinyFrame:Show()
+                self:UpdateTinyDisplay()
+            end
+        end
     else
-        LogFilterGroupFrame:Show()
-        if not self.mainWindowMinimized then
-            self:UpdateDisplay()
+        -- Toggle main frame
+        if LogFilterGroupFrame:IsVisible() then
+            LogFilterGroupFrame:Hide()
+        else
+            LogFilterGroupFrame:Show()
+            if not self.mainWindowMinimized then
+                self:UpdateDisplay()
+            end
         end
     end
 end

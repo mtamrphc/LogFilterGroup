@@ -16,6 +16,7 @@ LogFilterGroup.nextMessageId = 1  -- Auto-incrementing ID for messages
 local defaults = {
     globalLocked = false,
     soundEnabled = true,
+    inTinyMode = false,
     messageRepository = {},
     nextMessageId = 1,
     tabs = {
@@ -248,6 +249,7 @@ function LogFilterGroup:Initialize()
     if self.soundEnabled == nil then
         self.soundEnabled = true
     end
+    self.inTinyMode = LogFilterGroupDB.inTinyMode or false
     self.messageRepository = LogFilterGroupDB.messageRepository or {}
     self.nextMessageId = LogFilterGroupDB.nextMessageId or 1
 
@@ -428,6 +430,7 @@ function LogFilterGroup:SaveSettings()
     LogFilterGroupDB.nextTabId = self.nextTabId
     LogFilterGroupDB.globalLocked = self.globalLocked
     LogFilterGroupDB.soundEnabled = self.soundEnabled
+    LogFilterGroupDB.inTinyMode = self.inTinyMode
     LogFilterGroupDB.messageRepository = self.messageRepository
     LogFilterGroupDB.nextMessageId = self.nextMessageId
 

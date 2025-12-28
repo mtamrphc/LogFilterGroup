@@ -222,38 +222,52 @@ function LogFilterGroup:CreateTinyModeFrame()
     end)
     frame.scrollFrame = scrollFrame
 
-    -- Timer to update glow fade effect
-    frame.glowUpdateElapsed = 0
-    frame:SetScript("OnUpdate", function()
-        frame.glowUpdateElapsed = frame.glowUpdateElapsed + arg1
-        if frame.glowUpdateElapsed >= 0.5 then  -- Update every 0.5 seconds
-            frame.glowUpdateElapsed = 0
-            LogFilterGroup:UpdateTinyDisplay()
-        end
-    end)
-
     -- Handle resize to update display
+    -- Throttle to avoid performance issues during resize dragging
+    local tinyResizeTimer = 0
+
+    -- Timer to handle delayed resize updates for Tiny frame
+    frame.resizeUpdateTimer = function(elapsed)
+        if tinyResizeTimer > 0 then
+            tinyResizeTimer = tinyResizeTimer - elapsed
+            if tinyResizeTimer <= 0 then
+                tinyResizeTimer = 0
+                -- Resize has stopped, now update display
+                -- Recalculate number of visible rows based on new height
+                local availableHeight = frame:GetHeight() - 30  -- Subtract header height
+                local newRowCount = math.floor(availableHeight / TINY_ROW_HEIGHT)
+                newRowCount = math.max(1, math.min(newRowCount, 20))  -- Clamp between 1-20 rows
+
+                -- Update row visibility and width
+                -- Calculate row width based on frame width minus margins (8 left + 28 right for scrollbar + 5 extra)
+                local newRowWidth = frame:GetWidth() - 8 - 28 - 5
+                for i = 1, table.getn(frame.rows) do
+                    if i <= newRowCount then
+                        frame.rows[i]:SetWidth(newRowWidth)
+                        frame.rows[i]:Show()
+                    else
+                        frame.rows[i]:Hide()
+                    end
+                end
+
+                LogFilterGroup:UpdateTinyDisplay()
+                LogFilterGroup:SaveTinyFramePosition()
+
+                -- Disable OnUpdate now that resize is complete
+                frame:SetScript("OnUpdate", nil)
+            end
+        end
+    end
+
     frame:SetScript("OnSizeChanged", function()
         if frame:IsVisible() then
-            -- Recalculate number of visible rows based on new height
-            local availableHeight = frame:GetHeight() - 30  -- Subtract header height
-            local newRowCount = math.floor(availableHeight / TINY_ROW_HEIGHT)
-            newRowCount = math.max(1, math.min(newRowCount, 20))  -- Clamp between 1-20 rows
+            -- Schedule updates for later to avoid lag
+            tinyResizeTimer = 0.15  -- Wait 0.15 seconds after resize stops
 
-            -- Update row visibility and width
-            -- Calculate row width based on frame width minus margins (8 left + 28 right for scrollbar + 5 extra)
-            local newRowWidth = frame:GetWidth() - 8 - 28 - 5
-            for i = 1, table.getn(frame.rows) do
-                if i <= newRowCount then
-                    frame.rows[i]:SetWidth(newRowWidth)
-                    frame.rows[i]:Show()
-                else
-                    frame.rows[i]:Hide()
-                end
-            end
-
-            LogFilterGroup:UpdateTinyDisplay()
-            LogFilterGroup:SaveTinyFramePosition()
+            -- Enable OnUpdate only during resize
+            frame:SetScript("OnUpdate", function()
+                frame.resizeUpdateTimer(arg1 or 0)
+            end)
         end
     end)
 
@@ -608,8 +622,9 @@ function LogFilterGroup:EnterTinyMode()
     self:UpdateTinyDisplay()
     self:UpdateTinySoundButton()
 
-    -- Set flag
+    -- Set flag and save
     self.inTinyMode = true
+    self:SaveSettings()
 end
 
 -- Exit tiny mode
@@ -625,8 +640,9 @@ function LogFilterGroup:ExitTinyMode()
         self:UpdateDisplay()
     end
 
-    -- Clear flag
+    -- Clear flag and save
     self.inTinyMode = false
+    self:SaveSettings()
 end
 
 -- Helper function to send whisper from tiny mode
