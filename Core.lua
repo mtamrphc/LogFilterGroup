@@ -23,11 +23,11 @@ local defaults = {
             id = "lfm",
             name = "Find Group",
             messageRefs = {},  -- Changed from messages to messageRefs
-            filterText = "",
+            filterText = "lfm OR lf1m OR lf2m OR lf3m OR lf4m OR lf5m OR looking for more OR need more OR recruiting OR (lf tank) OR (lf heal) OR (lf dps) OR (lf rogue) OR (lf warrior) OR (lf mage) OR (lf priest) OR (lf warlock) OR (lf hunter) OR (lf druid) OR (lf paladin) OR (lf shaman)",
             excludeText = "",
             whisperTemplate = "inv",
             autoSendWhisper = false,
-            isDefault = true,
+            isDefault = false,  -- Changed to false so it behaves like a custom tab
             locked = false,
             muted = false
         },
@@ -35,11 +35,11 @@ local defaults = {
             id = "lfg",
             name = "Find Member",
             messageRefs = {},  -- Changed from messages to messageRefs
-            filterText = "",
+            filterText = "lfg OR lf1g OR lf2g OR lf3g OR looking for group OR looking for raid OR seeking group",
             excludeText = "",
             whisperTemplate = "",
             autoSendWhisper = false,
-            isDefault = true,
+            isDefault = false,  -- Changed to false so it behaves like a custom tab
             locked = false,
             muted = false
         },
@@ -47,11 +47,11 @@ local defaults = {
             id = "profession",
             name = "Professions",
             messageRefs = {},  -- Changed from messages to messageRefs
-            filterText = "",
+            filterText = "lfw OR lf work OR looking for work OR lfwork OR blacksmith OR tailor OR alchemist OR enchanter OR engineer OR leatherworker OR jewelcrafter OR inscription OR wts OR wtb OR wtt OR transmute OR enchanting OR recipe OR pattern OR formula OR craft OR crafting",
             excludeText = "",
             whisperTemplate = "How much?",
             autoSendWhisper = false,
-            isDefault = true,
+            isDefault = false,  -- Changed to false so it behaves like a custom tab
             locked = false,
             muted = false
         }
@@ -182,6 +182,50 @@ function LogFilterGroup:Initialize()
         LogFilterGroupDB.professionMessages = nil
 
         print("LogFilterGroup: Migrated settings from old version")
+    end
+
+    -- Migrate default tabs to pre-configured filter-based tabs
+    if LogFilterGroupDB.tabs and table.getn(LogFilterGroupDB.tabs) >= 3 then
+        local needsMigration = false
+
+        -- Check if any of the first 3 tabs still have isDefault = true
+        for i = 1, 3 do
+            if LogFilterGroupDB.tabs[i] and LogFilterGroupDB.tabs[i].isDefault == true then
+                needsMigration = true
+                break
+            end
+        end
+
+        if needsMigration then
+            -- Migrate the three default tabs to pre-configured custom tabs with filters
+            local filterConfigs = {
+                {
+                    id = "lfm",
+                    filterText = "lfm OR lf1m OR lf2m OR lf3m OR lf4m OR lf5m OR looking for more OR need more OR recruiting OR (lf tank) OR (lf heal) OR (lf dps) OR (lf rogue) OR (lf warrior) OR (lf mage) OR (lf priest) OR (lf warlock) OR (lf hunter) OR (lf druid) OR (lf paladin) OR (lf shaman)"
+                },
+                {
+                    id = "lfg",
+                    filterText = "lfg OR lf1g OR lf2g OR lf3g OR looking for group OR looking for raid OR seeking group"
+                },
+                {
+                    id = "profession",
+                    filterText = "lfw OR lf work OR looking for work OR lfwork OR blacksmith OR tailor OR alchemist OR enchanter OR engineer OR leatherworker OR jewelcrafter OR inscription OR wts OR wtb OR wtt OR transmute OR enchanting OR recipe OR pattern OR formula OR craft OR crafting"
+                }
+            }
+
+            for i = 1, 3 do
+                if LogFilterGroupDB.tabs[i] and LogFilterGroupDB.tabs[i].id == filterConfigs[i].id then
+                    -- Only update if filterText is empty (user hasn't customized it yet)
+                    if not LogFilterGroupDB.tabs[i].filterText or LogFilterGroupDB.tabs[i].filterText == "" then
+                        LogFilterGroupDB.tabs[i].filterText = filterConfigs[i].filterText
+                    end
+                    -- Change isDefault to false so it behaves like a custom tab
+                    LogFilterGroupDB.tabs[i].isDefault = false
+                end
+            end
+
+            print("LogFilterGroup: Migrated default tabs to pre-configured filter-based tabs")
+        end
     end
 
     -- Load tabs (ensure at least default tabs exist)

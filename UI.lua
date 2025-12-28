@@ -295,6 +295,161 @@ local function EscapePattern(str)
     return string.gsub(str, "([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
 end
 
+-- Helper function to process quoted phrases in filter text
+-- Extracts quoted strings and replaces them with placeholders
+-- Returns: modified filter text, quote mappings table
+local function ProcessQuotes(filterText)
+    local quoteMappings = {}
+    local quoteCounter = 1
+    local result = ""
+    local i = 1
+    local inQuote = false
+    local currentContent = ""
+
+    while i <= string.len(filterText) do
+        local char = string.sub(filterText, i, i)
+
+        if char == '"' then
+            -- Check if escaped
+            local prevChar = i > 1 and string.sub(filterText, i-1, i-1) or ""
+            if prevChar == "\\" then
+                -- Escaped quote, add to content
+                if inQuote then
+                    -- Remove the backslash and add the quote
+                    currentContent = string.sub(currentContent, 1, -2) .. '"'
+                else
+                    -- Remove the backslash from result and add the quote
+                    result = string.sub(result, 1, -2) .. '"'
+                end
+            else
+                -- Toggle quote state
+                if inQuote then
+                    -- End quote - create placeholder
+                    local placeholder = "___QUOTE" .. quoteCounter .. "___"
+                    quoteMappings[placeholder] = currentContent
+                    result = result .. placeholder
+                    quoteCounter = quoteCounter + 1
+                    currentContent = ""
+                    inQuote = false
+                else
+                    -- Start quote
+                    inQuote = true
+                end
+            end
+        else
+            if inQuote then
+                currentContent = currentContent .. char
+            else
+                result = result .. char
+            end
+        end
+
+        i = i + 1
+    end
+
+    -- Handle unclosed quote (fail open - treat as literal)
+    if inQuote then
+        result = result .. '"' .. currentContent
+    end
+
+    return result, quoteMappings
+end
+
+-- Helper function to process match type prefixes and resolve quote placeholders
+-- Returns: {matchType = "exact|prefix|suffix|contains", searchTerm = "..."}
+local function ProcessMatchTypes(term, quoteMappings)
+    -- Handle nil term
+    if not term then
+        return {matchType = "contains", searchTerm = ""}
+    end
+
+    -- Ensure quoteMappings is a table
+    if not quoteMappings then
+        quoteMappings = {}
+    end
+
+    -- Trim whitespace
+    term = string.gsub(term, "^%s*(.-)%s*$", "%1")
+
+    -- Use string.find to check for match type prefixes (don't lowercase the whole term yet)
+    local colonPos = string.find(term, ":")
+    if colonPos then
+        local prefix = string.sub(term, 1, colonPos - 1)
+        prefix = string.gsub(prefix, "^%s*(.-)%s*$", "%1")  -- Trim prefix
+        local lowerPrefix = string.lower(prefix)  -- Lowercase only the prefix for comparison
+
+        -- Check if it's a valid match type
+        if lowerPrefix == "exact" or lowerPrefix == "prefix" or lowerPrefix == "suffix" or lowerPrefix == "contains" then
+            local searchTerm = string.sub(term, colonPos + 1)
+            searchTerm = string.gsub(searchTerm, "^%s*(.-)%s*$", "%1")  -- Trim
+
+            -- Resolve quote placeholder if present (placeholders are case-sensitive)
+            if quoteMappings[searchTerm] then
+                searchTerm = quoteMappings[searchTerm]
+            end
+
+            return {matchType = lowerPrefix, searchTerm = searchTerm}
+        end
+    end
+
+    -- No valid prefix, default to contains
+    local searchTerm = term
+
+    -- Resolve quote placeholder if present
+    if quoteMappings[searchTerm] then
+        searchTerm = quoteMappings[searchTerm]
+    end
+
+    return {matchType = "contains", searchTerm = searchTerm}
+end
+
+-- Helper function to perform the actual matching based on match type
+-- Returns: boolean indicating if message matches the search term
+local function PerformMatch(message, matchType, searchTerm)
+    local lowerMessage = string.lower(message)
+    local lowerTerm = string.lower(searchTerm)
+
+    -- Empty term matches nothing
+    if lowerTerm == "" then
+        return false
+    end
+
+    if matchType == "exact" then
+        -- Exact match: for single words, match whole word; for phrases, match the phrase
+        local escapedTerm = EscapePattern(lowerTerm)
+
+        -- Check if term contains spaces (multi-word phrase)
+        if string.find(lowerTerm, " ") then
+            -- Multi-word phrase: just check if the phrase appears in the message
+            if string.find(lowerMessage, escapedTerm) then
+                return true
+            end
+        else
+            -- Single word: match as whole word with space boundaries
+            local paddedMessage = " " .. lowerMessage .. " "
+            local paddedTerm = " " .. lowerTerm .. " "
+
+            if string.find(paddedMessage, paddedTerm, 1, true) then
+                return true
+            end
+        end
+
+        return false
+
+    elseif matchType == "prefix" then
+        local escapedTerm = EscapePattern(lowerTerm)
+        return string.find(lowerMessage, "^" .. escapedTerm) ~= nil
+
+    elseif matchType == "suffix" then
+        local escapedTerm = EscapePattern(lowerTerm)
+        return string.find(lowerMessage, escapedTerm .. "$") ~= nil
+
+    else  -- "contains" or any other value (default)
+        local escapedTerm = EscapePattern(lowerTerm)
+        return string.find(lowerMessage, escapedTerm) ~= nil
+    end
+end
+
 -- Helper function to truncate message if it's too long and add '...' if truncated
 -- Returns: displayText, isTruncated
 function LogFilterGroup.TruncateMessage(message, maxWidth)
@@ -448,7 +603,7 @@ function LogFilterGroup.TruncateMessage(message, maxWidth)
 end
 
 -- Helper function to evaluate a simple expression (no parentheses)
-local function EvaluateSimpleExpression(message, expression)
+local function EvaluateSimpleExpression(message, expression, quoteMappings)
     local lowerMessage = string.lower(message)
     local lowerExpr = string.lower(expression)
 
@@ -481,7 +636,7 @@ local function EvaluateSimpleExpression(message, expression)
 
         -- At least one OR term must match
         for _, term in ipairs(orTerms) do
-            if EvaluateSimpleExpression(message, term) then
+            if EvaluateSimpleExpression(message, term, quoteMappings) then
                 return true
             end
         end
@@ -510,18 +665,18 @@ local function EvaluateSimpleExpression(message, expression)
         -- All AND terms must match
         for _, term in ipairs(andTerms) do
             term = string.gsub(term, "^%s*(.-)%s*$", "%1")
-            -- Escape the term for literal search
-            local searchTerm = EscapePattern(term)
-            if not string.find(lowerMessage, searchTerm) then
+            -- Use new match type processing
+            local matchData = ProcessMatchTypes(term, quoteMappings)
+            if not PerformMatch(message, matchData.matchType, matchData.searchTerm) then
                 return false
             end
         end
         return true
 
     else
-        -- Simple search term - escape pattern characters for literal search
-        local searchTerm = EscapePattern(lowerExpr)
-        return string.find(lowerMessage, searchTerm) ~= nil
+        -- Simple search term - use new match type processing
+        local matchData = ProcessMatchTypes(lowerExpr, quoteMappings)
+        return PerformMatch(message, matchData.matchType, matchData.searchTerm)
     end
 end
 
@@ -556,7 +711,11 @@ function LogFilterGroup.MatchesFilter(message, filterText)
     -- Strip item/enchant/spell links before filtering
     message = StripLinks(message)
 
-    local lowerFilter = filterText
+    -- Process quotes first to extract quoted phrases
+    local quoteMappings = {}
+    local lowerFilter
+    lowerFilter, quoteMappings = ProcessQuotes(filterText)
+
     local placeholderCount = 0
     local placeholderResults = {}
 
@@ -569,8 +728,8 @@ function LogFilterGroup.MatchesFilter(message, filterText)
         -- Extract expression inside parentheses (without the parentheses)
         local innerExpr = string.sub(lowerFilter, startPos + 1, endPos - 1)
 
-        -- Evaluate the inner expression
-        local result = EvaluateSimpleExpression(message, innerExpr)
+        -- Evaluate the inner expression with quote mappings
+        local result = EvaluateSimpleExpression(message, innerExpr, quoteMappings)
 
         -- Create a unique placeholder
         placeholderCount = placeholderCount + 1
@@ -584,25 +743,29 @@ function LogFilterGroup.MatchesFilter(message, filterText)
     -- Evaluate the final expression, treating placeholders as search terms
     -- We need a modified version of EvaluateSimpleExpression that handles placeholders
     local function EvaluateWithPlaceholders(expr)
-        local lowerExpr = string.lower(expr)
-        lowerExpr = string.gsub(lowerExpr, "^%s*(.-)%s*$", "%1")
+        -- Trim whitespace but preserve case for placeholders
+        expr = string.gsub(expr, "^%s*(.-)%s*$", "%1")
 
-        if lowerExpr == "" then
+        if expr == "" then
             return true
         end
+
+        -- Use lowercase only for checking operators, not for the whole expression
+        local lowerExpr = string.lower(expr)
 
         -- Check for OR operator
         if string.find(lowerExpr, " or ") then
             local orTerms = {}
             local currentTerm = ""
             local i = 1
-            while i <= string.len(lowerExpr) do
-                if string.sub(lowerExpr, i, i+3) == " or " then
+            while i <= string.len(expr) do
+                local lowerSubstr = string.lower(string.sub(expr, i, i+3))
+                if lowerSubstr == " or " then
                     table.insert(orTerms, currentTerm)
                     currentTerm = ""
                     i = i + 4
                 else
-                    currentTerm = currentTerm .. string.sub(lowerExpr, i, i)
+                    currentTerm = currentTerm .. string.sub(expr, i, i)
                     i = i + 1
                 end
             end
@@ -620,13 +783,14 @@ function LogFilterGroup.MatchesFilter(message, filterText)
             local andTerms = {}
             local currentTerm = ""
             local i = 1
-            while i <= string.len(lowerExpr) do
-                if string.sub(lowerExpr, i, i+4) == " and " then
+            while i <= string.len(expr) do
+                local lowerSubstr = string.lower(string.sub(expr, i, i+4))
+                if lowerSubstr == " and " then
                     table.insert(andTerms, currentTerm)
                     currentTerm = ""
                     i = i + 5
                 else
-                    currentTerm = currentTerm .. string.sub(lowerExpr, i, i)
+                    currentTerm = currentTerm .. string.sub(expr, i, i)
                     i = i + 1
                 end
             end
@@ -640,14 +804,13 @@ function LogFilterGroup.MatchesFilter(message, filterText)
             return true
 
         else
-            -- Check if this is a placeholder
-            lowerExpr = string.gsub(lowerExpr, "^%s*(.-)%s*$", "%1")
-            if placeholderResults[lowerExpr] ~= nil then
-                return placeholderResults[lowerExpr]
+            -- Check if this is a parentheses placeholder (case-sensitive)
+            if placeholderResults[expr] ~= nil then
+                return placeholderResults[expr]
             end
-            -- Otherwise, it's a simple search term - escape pattern characters for literal search
-            local searchTerm = EscapePattern(lowerExpr)
-            return string.find(string.lower(message), searchTerm) ~= nil
+            -- Otherwise, use new match type processing (preserving case for quote placeholders)
+            local matchData = ProcessMatchTypes(expr, quoteMappings)
+            return PerformMatch(message, matchData.matchType, matchData.searchTerm)
         end
     end
 
@@ -860,6 +1023,36 @@ function LogFilterGroup:CreateFrame()
         GameTooltip:Hide()
     end)
     frame.clearIconButton = clearIconButton
+
+    -- Help button (next to clear button)
+    local helpButton = CreateFrame("Button", nil, frame)
+    helpButton:SetWidth(16)
+    helpButton:SetHeight(16)
+    helpButton:SetPoint("RIGHT", clearIconButton, "LEFT", -2, 0)
+
+    -- Use a button texture that exists in classic WoW
+    helpButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
+    helpButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
+    helpButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+
+    -- Add a "?" text overlay
+    local helpText = helpButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    helpText:SetPoint("CENTER", helpButton, "CENTER", 0, 0)
+    helpText:SetText("|cFFFFFFFF?|r")
+    helpButton.helpText = helpText
+
+    helpButton:SetScript("OnClick", function()
+        LogFilterGroup:ShowHelpWindow()
+    end)
+    helpButton:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_LEFT")
+        GameTooltip:SetText("Help\n|cFFFFFFFFClick for addon help and filter syntax|r")
+        GameTooltip:Show()
+    end)
+    helpButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    frame.helpButton = helpButton
 
     -- Tab buttons storage (will be created dynamically)
     frame.tabButtons = {}
@@ -1870,5 +2063,121 @@ function LogFilterGroup:ToggleFrame()
         if not self.mainWindowMinimized then
             self:UpdateDisplay()
         end
+    end
+end
+
+-- Show help window
+function LogFilterGroup:ShowHelpWindow()
+    -- Create help frame if it doesn't exist
+    if not LogFilterGroupHelpFrame then
+        local helpFrame = CreateFrame("Frame", "LogFilterGroupHelpFrame", UIParent)
+        helpFrame:SetWidth(500)
+        helpFrame:SetHeight(550)
+        helpFrame:SetPoint("CENTER", UIParent, "CENTER")
+        helpFrame:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true,
+            tileSize = 32,
+            edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 }
+        })
+        helpFrame:SetBackdropColor(0, 0, 0, 1)
+        helpFrame:EnableMouse(true)
+        helpFrame:SetMovable(true)
+        helpFrame:RegisterForDrag("LeftButton")
+        helpFrame:SetScript("OnDragStart", function() this:StartMoving() end)
+        helpFrame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
+        helpFrame:SetFrameStrata("DIALOG")
+
+        -- Title
+        local title = helpFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", helpFrame, "TOP", 0, -20)
+        title:SetText("LogFilterGroup - Help")
+
+        -- Close button
+        local closeBtn = CreateFrame("Button", nil, helpFrame, "UIPanelCloseButton")
+        closeBtn:SetPoint("TOPRIGHT", helpFrame, "TOPRIGHT", -5, -5)
+
+        -- Scroll frame for content
+        local scrollFrame = CreateFrame("ScrollFrame", "LogFilterGroupHelpScrollFrame", helpFrame, "UIPanelScrollFrameTemplate")
+        scrollFrame:SetPoint("TOPLEFT", helpFrame, "TOPLEFT", 20, -50)
+        scrollFrame:SetPoint("BOTTOMRIGHT", helpFrame, "BOTTOMRIGHT", -30, 20)
+
+        -- Content frame
+        local content = CreateFrame("Frame", nil, scrollFrame)
+        content:SetWidth(440)
+        content:SetHeight(1200)
+        scrollFrame:SetScrollChild(content)
+
+        -- Help text
+        local helpText = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        helpText:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+        helpText:SetWidth(440)
+        helpText:SetJustifyH("LEFT")
+        helpText:SetJustifyV("TOP")
+        helpText:SetText(
+            "|cFFFFD700Overview|r\n" ..
+            "LogFilterGroup filters LFG/LFM messages from chat channels. Messages are organized into tabs with customizable filters.\n\n" ..
+
+            "|cFFFFD700Tab Management|r\n" ..
+            "|cFFFFFFFF• Default Tabs:|r Find Group, Find Member, Professions\n" ..
+            "|cFFFFFFFF• Custom Tabs:|r Click '+' to create, right-click to rename/delete/mute\n" ..
+            "|cFFFFFFFF• Muted Tabs:|r No sound/flash notifications for new messages\n\n" ..
+
+            "|cFFFFD700Filter Field|r\n" ..
+            "Show only messages matching your filter. Supports AND/OR logic and quotes.\n\n" ..
+
+            "|cFFFFD700Exclude Field|r\n" ..
+            "Hide messages matching this filter (checked against both message and sender).\n\n" ..
+
+            "|cFFFFD700Filter Syntax|r\n" ..
+            "|cFFFFFFFF• Basic:|r |cFF00FF00tank|r - contains \"tank\"\n" ..
+            "|cFFFFFFFF• Quotes:|r |cFF00FF00\"dark iron helm\"|r - exact phrase\n" ..
+            "|cFFFFFFFF• AND:|r |cFF00FF00tank AND healer|r - must have both\n" ..
+            "|cFFFFFFFF• OR:|r |cFF00FF00tank OR healer|r - either one\n" ..
+            "|cFFFFFFFF• Parentheses:|r |cFF00FF00(tank OR heal) AND lfm|r\n" ..
+            "|cFFFFFFFF• Exact word:|r |cFF00FF00exact:tank|r - whole word only\n" ..
+            "|cFFFFFFFF• Starts with:|r |cFF00FF00prefix:lf|r - message starts with\n" ..
+            "|cFFFFFFFF• Ends with:|r |cFF00FF00suffix:pst|r - message ends with\n" ..
+            "|cFFFFFFFF• Contains:|r |cFF00FF00contains:tank|r - same as basic\n\n" ..
+
+            "|cFFFFD700Match Type Examples|r\n" ..
+            "|cFFFFFFFF• |cFF00FF00exact:\"lf tank\"|r - phrase anywhere in message\n" ..
+            "|cFFFFFFFF• |cFF00FF00prefix:\"looking for\"|r - starts with phrase\n" ..
+            "|cFFFFFFFF• |cFF00FF00suffix:\"pst me\"|r - ends with phrase\n" ..
+            "|cFFFFFFFF• |cFF00FF00(exact:tank OR exact:heal) AND prefix:lf|r\n\n" ..
+
+            "|cFFFFD700Whisper Template|r\n" ..
+            "Set a template message (e.g., \"inv\"). Click a message to auto-whisper the sender.\n\n" ..
+
+            "|cFFFFD700Action Buttons|r\n" ..
+            "|cFFFFFFFF• Whisper:|r Send template to sender (or blank if no template)\n" ..
+            "|cFFFFFFFF• Invite:|r Invite sender to group\n" ..
+            "|cFFFFFFFF• Clear:|r Remove all messages from current tab\n\n" ..
+
+            "|cFFFFD700Title Bar Buttons|r\n" ..
+            "|cFFFFFFFF• Help (?):|r Show this help window\n" ..
+            "|cFFFFFFFF• Clear (X):|r Remove all messages from current tab\n" ..
+            "|cFFFFFFFF• Lock:|r Prevent editing filters\n" ..
+            "|cFFFFFFFF• Sound:|r Toggle notification sounds\n" ..
+            "|cFFFFFFFF• Minimize (-):|r Minimize to title bar\n" ..
+            "|cFFFFFFFF• Close:|r Hide addon window\n\n" ..
+
+            "|cFFFFD700Tips|r\n" ..
+            "|cFFFFFFFF• Right-click tabs for more options\n" ..
+            "|cFFFFFFFF• Use quotes for multi-word phrases\n" ..
+            "|cFFFFFFFF• Combine match types with AND/OR for powerful filters\n" ..
+            "|cFFFFFFFF• Messages auto-clear after 5 minutes|r"
+        )
+
+        helpFrame:Hide()
+    end
+
+    -- Toggle visibility
+    if LogFilterGroupHelpFrame:IsVisible() then
+        LogFilterGroupHelpFrame:Hide()
+    else
+        LogFilterGroupHelpFrame:Show()
     end
 end
