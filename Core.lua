@@ -540,6 +540,36 @@ eventFrame:SetScript("OnEvent", function()
         end
 
         if message and sender then
+            -- Skip addon communication messages using heuristic detection
+            -- Addon messages typically: start with Identifier:data or Identifier.data,
+            -- have very few spaces, and high density of numbers/delimiters
+            local msgLen = string.len(message)
+            local _, spaceCount = string.gsub(message, " ", " ")
+
+            -- Check 1: Starts with identifier followed by colon/dot and data with no spaces
+            -- Pattern like "ATW:1043:v" or "AddonData.456" - these are almost always addon messages
+            if string.find(message, "^[A-Za-z_]+[:%.]%S") and spaceCount == 0 then
+                return  -- Skip addon message (no human types "Word:stuff" with zero spaces)
+            end
+
+            if msgLen > 10 then
+                -- Check 2: Starts with identifier:data pattern with very few spaces
+                if string.find(message, "^[A-Za-z_]+[:%.]%S") then
+                    -- If very few spaces relative to length, likely addon data
+                    if spaceCount < 2 or (spaceCount < msgLen / 15) then
+                        return  -- Skip likely addon message
+                    end
+                end
+
+                -- Check 3: High density of numbers and delimiters (serialized data pattern)
+                local _, numCount = string.gsub(message, "[0-9]", "0")
+                local _, delimCount = string.gsub(message, "[:%.,%-]", ":")
+                -- If more than 50% of message is numbers/delimiters with few spaces, likely addon data
+                if (numCount + delimCount) > (msgLen * 0.5) and spaceCount < 3 then
+                    return  -- Skip likely addon data
+                end
+            end
+
             -- Debug output to help diagnose issues
             if LogFilterGroup.debugMode and (event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY") then
                 DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup [" .. event .. "]: Checking message from " .. sender .. ": " .. message)
