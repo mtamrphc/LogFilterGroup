@@ -1026,18 +1026,25 @@ function LogFilterGroup:CreateFrame()
 
     -- Help button (next to clear button)
     local helpButton = CreateFrame("Button", nil, frame)
-    helpButton:SetWidth(16)
-    helpButton:SetHeight(16)
-    helpButton:SetPoint("RIGHT", clearIconButton, "LEFT", -2, 0)
+    helpButton:SetWidth(20)
+    helpButton:SetHeight(20)
+    helpButton:SetPoint("RIGHT", clearIconButton, "LEFT", -3, 0)
 
-    -- Use a button texture that exists in classic WoW
-    helpButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
-    helpButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
-    helpButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+    -- Create backdrop for clean button appearance
+    helpButton:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 }
+    })
+    helpButton:SetBackdropColor(0.8, 0.1, 0.1, 1)  -- Red background
+    helpButton:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)  -- Dark border
 
-    -- Add a "?" text overlay
-    local helpText = helpButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    helpText:SetPoint("CENTER", helpButton, "CENTER", 0, 0)
+    -- Add a larger "?" text
+    local helpText = helpButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    helpText:SetPoint("CENTER", helpButton, "CENTER", 0, 1)
     helpText:SetText("|cFFFFFFFF?|r")
     helpButton.helpText = helpText
 
@@ -1045,11 +1052,13 @@ function LogFilterGroup:CreateFrame()
         LogFilterGroup:ShowHelpWindow()
     end)
     helpButton:SetScript("OnEnter", function()
+        helpButton:SetBackdropColor(1, 0.2, 0.2, 1)  -- Brighter red on hover
         GameTooltip:SetOwner(this, "ANCHOR_LEFT")
         GameTooltip:SetText("Help\n|cFFFFFFFFClick for addon help and filter syntax|r")
         GameTooltip:Show()
     end)
     helpButton:SetScript("OnLeave", function()
+        helpButton:SetBackdropColor(0.8, 0.1, 0.1, 1)  -- Normal red
         GameTooltip:Hide()
     end)
     frame.helpButton = helpButton
