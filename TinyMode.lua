@@ -14,8 +14,19 @@ function LogFilterGroup:CreateTinyModeFrame()
     end
 
     local frame = CreateFrame("Frame", "LogFilterGroupTinyFrame", UIParent)
-    frame:SetWidth(200)
-    frame:SetHeight(30 + (TINY_ROW_HEIGHT * TINY_ROWS_VISIBLE))
+
+    -- Set default size
+    local defaultWidth = 200
+    local defaultHeight = 30 + (TINY_ROW_HEIGHT * TINY_ROWS_VISIBLE)
+
+    -- Restore saved size, or use defaults
+    if self.tinyFrameSize then
+        frame:SetWidth(self.tinyFrameSize.width)
+        frame:SetHeight(self.tinyFrameSize.height)
+    else
+        frame:SetWidth(defaultWidth)
+        frame:SetHeight(defaultHeight)
+    end
 
     -- Restore saved position, or default to center
     if self.tinyFramePosition then
@@ -29,6 +40,11 @@ function LogFilterGroup:CreateTinyModeFrame()
     else
         frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     end
+
+    -- Make frame resizable
+    frame:SetResizable(true)
+    frame:SetMinResize(200, 150)  -- Minimum: current compact size
+    frame:SetMaxResize(1200, 600)  -- Maximum: allow very wide for message viewing
     frame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -51,12 +67,8 @@ function LogFilterGroup:CreateTinyModeFrame()
     frame:SetFrameStrata("MEDIUM")
     frame:Hide()
 
-    -- Title bar with tab name (moved to the left)
-    local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    title:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -8)
-    title:SetText("Loading...")
-    title:SetJustifyH("LEFT")
-    frame.title = title
+    -- Container for tab buttons
+    frame.tabButtons = {}
 
     -- Close button (make it smaller to match other buttons)
     local closeButton = CreateFrame("Button", nil, frame)
@@ -170,6 +182,37 @@ function LogFilterGroup:CreateTinyModeFrame()
     end)
     frame.clearButton = clearButton
 
+    -- Resize grip (bottom-right corner)
+    local resizeGrip = frame:CreateTexture(nil, "OVERLAY")
+    resizeGrip:SetWidth(16)
+    resizeGrip:SetHeight(16)
+    resizeGrip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
+    resizeGrip:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    frame.resizeGrip = resizeGrip
+
+    -- Invisible resize button for dragging
+    local resizeButton = CreateFrame("Button", nil, frame)
+    resizeButton:SetWidth(16)
+    resizeButton:SetHeight(16)
+    resizeButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    resizeButton:SetScript("OnMouseDown", function()
+        frame:StartSizing("BOTTOMRIGHT")
+        resizeGrip:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    end)
+    resizeButton:SetScript("OnMouseUp", function()
+        frame:StopMovingOrSizing()
+        resizeGrip:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+        LogFilterGroup:SaveTinyFramePosition()
+        LogFilterGroup:UpdateTinyDisplay()
+    end)
+    resizeButton:SetScript("OnEnter", function()
+        resizeGrip:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    end)
+    resizeButton:SetScript("OnLeave", function()
+        resizeGrip:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    end)
+    frame.resizeButton = resizeButton
+
     -- Scroll frame for messages
     local scrollFrame = CreateFrame("ScrollFrame", "LogFilterGroupTinyScrollFrame", frame, "FauxScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -25)
@@ -189,9 +232,34 @@ function LogFilterGroup:CreateTinyModeFrame()
         end
     end)
 
+    -- Handle resize to update display
+    frame:SetScript("OnSizeChanged", function()
+        if frame:IsVisible() then
+            -- Recalculate number of visible rows based on new height
+            local availableHeight = frame:GetHeight() - 30  -- Subtract header height
+            local newRowCount = math.floor(availableHeight / TINY_ROW_HEIGHT)
+            newRowCount = math.max(1, math.min(newRowCount, 20))  -- Clamp between 1-20 rows
+
+            -- Update row visibility and width
+            -- Calculate row width based on frame width minus margins (8 left + 28 right for scrollbar + 5 extra)
+            local newRowWidth = frame:GetWidth() - 8 - 28 - 5
+            for i = 1, table.getn(frame.rows) do
+                if i <= newRowCount then
+                    frame.rows[i]:SetWidth(newRowWidth)
+                    frame.rows[i]:Show()
+                else
+                    frame.rows[i]:Hide()
+                end
+            end
+
+            LogFilterGroup:UpdateTinyDisplay()
+            LogFilterGroup:SaveTinyFramePosition()
+        end
+    end)
+
     -- Create message rows
     frame.rows = {}
-    for i = 1, TINY_ROWS_VISIBLE do
+    for i = 1, 20 do  -- Create 20 rows, show only as many as fit
         local row = CreateFrame("Frame", nil, frame)
         row:SetWidth(scrollFrame:GetWidth() - 5)
         row:SetHeight(TINY_ROW_HEIGHT)
@@ -219,6 +287,14 @@ function LogFilterGroup:CreateTinyModeFrame()
         timerText:SetJustifyH("LEFT")
         timerText:SetTextColor(0.7, 0.7, 0.7, 1)  -- Gray
         row.timerText = timerText
+
+        -- Message text (shown only when window is wide enough)
+        local messageText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        messageText:SetPoint("LEFT", timerText, "RIGHT", 5, 0)
+        messageText:SetPoint("RIGHT", row, "RIGHT", -55, 0)  -- Leave space for buttons
+        messageText:SetJustifyH("LEFT")
+        messageText:SetTextColor(1, 1, 1, 1)  -- White
+        row.messageText = messageText
 
         -- Make row show tooltip on hover
         row:EnableMouse(true)
@@ -367,9 +443,6 @@ function LogFilterGroup:UpdateTinyDisplay()
         return
     end
 
-    -- Update title with tab name
-    frame.title:SetText(tab.name)
-
     -- Collect and filter messages (same logic as main display)
     local filterText = tab.filterText
     local excludeText = tab.excludeText
@@ -400,16 +473,28 @@ function LogFilterGroup:UpdateTinyDisplay()
     end)
 
     local numMessages = table.getn(messages)
+
+    -- Calculate how many rows should actually be visible based on frame height
+    local availableHeight = frame:GetHeight() - 30
+    local visibleRowCount = math.floor(availableHeight / TINY_ROW_HEIGHT)
+    visibleRowCount = math.max(1, math.min(visibleRowCount, 20))
+
     local offset = FauxScrollFrame_GetOffset(frame.scrollFrame)
 
-    FauxScrollFrame_Update(frame.scrollFrame, numMessages, TINY_ROWS_VISIBLE, TINY_ROW_HEIGHT)
+    FauxScrollFrame_Update(frame.scrollFrame, numMessages, visibleRowCount, TINY_ROW_HEIGHT)
 
     local currentTime = time()
-    for i = 1, TINY_ROWS_VISIBLE do
+    -- Calculate row width based on frame width minus margins (8 left + 28 right for scrollbar + 5 extra)
+    local rowWidth = frame:GetWidth() - 8 - 28 - 5
+
+    for i = 1, 20 do  -- Loop through all 20 rows
         local row = frame.rows[i]
         local index = i + offset
 
-        if index <= numMessages then
+        -- Update row width to match current frame size
+        row:SetWidth(rowWidth)
+
+        if i <= visibleRowCount and index <= numMessages then
             local data = messages[index]
             row.senderName = data.sender
             row.fullMessage = data.message
@@ -427,6 +512,45 @@ function LogFilterGroup:UpdateTinyDisplay()
                 timeStr = string.format("%dm", minutes)
             end
             row.timerText:SetText(timeStr)
+
+            -- Dynamically show/hide and position elements based on frame width
+            local frameWidth = frame:GetWidth()
+
+            if frameWidth >= 300 then
+                -- Wide mode: Show message text
+                row.messageText:Show()
+
+                -- Truncate message to fit available space
+                -- Available width = frameWidth - (name + timer + buttons + margins)
+                local availableWidth = frameWidth - 70 - 20 - 55 - 20  -- margins
+                local truncatedMessage = LogFilterGroup.TruncateMessage(data.message, availableWidth)
+                row.messageText:SetText(truncatedMessage)
+
+                -- Position buttons at right edge and show them
+                row.whisperBtn:ClearAllPoints()
+                row.whisperBtn:SetPoint("RIGHT", row, "RIGHT", -40, 0)
+                row.whisperBtn:Show()
+                row.inviteBtn:ClearAllPoints()
+                row.inviteBtn:SetPoint("RIGHT", row, "RIGHT", -22, 0)
+                row.inviteBtn:Show()
+                row.clearBtn:ClearAllPoints()
+                row.clearBtn:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+                row.clearBtn:Show()
+            else
+                -- Narrow mode: Hide message, show only name/timer/buttons
+                row.messageText:Hide()
+
+                -- Position buttons after timer (original compact layout) and show them
+                row.whisperBtn:ClearAllPoints()
+                row.whisperBtn:SetPoint("LEFT", row.timerText, "RIGHT", 3, 0)
+                row.whisperBtn:Show()
+                row.inviteBtn:ClearAllPoints()
+                row.inviteBtn:SetPoint("LEFT", row.whisperBtn, "RIGHT", 3, 0)
+                row.inviteBtn:Show()
+                row.clearBtn:ClearAllPoints()
+                row.clearBtn:SetPoint("LEFT", row.inviteBtn, "RIGHT", 3, 0)
+                row.clearBtn:Show()
+            end
 
             -- Update button colors based on state
             if data.whispered then
@@ -453,7 +577,15 @@ function LogFilterGroup:UpdateTinyDisplay()
 
             row:Show()
         else
+            -- Hide row and all its elements
             row.glowBg:SetVertexColor(1, 1, 0, 0)  -- Clear glow
+            row.nameText:SetText("")
+            row.timerText:SetText("")
+            row.messageText:SetText("")
+            row.messageText:Hide()
+            row.whisperBtn:Hide()
+            row.inviteBtn:Hide()
+            row.clearBtn:Hide()
             row:Hide()
         end
     end
@@ -468,6 +600,10 @@ function LogFilterGroup:EnterTinyMode()
 
     -- Show tiny mode
     local tinyFrame = self:CreateTinyModeFrame()
+
+    -- Update tab buttons
+    self:UpdateTinyTabButtons()
+
     tinyFrame:Show()
     self:UpdateTinyDisplay()
     self:UpdateTinySoundButton()
@@ -523,5 +659,113 @@ function LogFilterGroup:UpdateTinySoundButton()
         frame.soundButton:SetNormalTexture("Interface\\Icons\\Ability_Warrior_BattleShout")
         frame.soundButton:SetPushedTexture("Interface\\Icons\\Ability_Warrior_BattleShout")
         frame.soundButton:GetNormalTexture():SetVertexColor(0.4, 0.4, 0.4, 1)
+    end
+end
+
+-- Switch active tab in tiny mode
+function LogFilterGroup:SwitchTinyTab(tabId)
+    -- Verify tab exists
+    if not self:GetTab(tabId) then
+        return
+    end
+
+    -- Update active tab
+    self.activeTabId = tabId
+
+    -- Stop flashing this tab since it's now active
+    self:StopFlashingTab(tabId)
+
+    -- Update tab button appearances
+    self:UpdateTinyTabButtons()
+
+    -- Save and refresh display
+    self:SaveSettings()
+    self:UpdateTinyDisplay()
+end
+
+-- Update tab buttons to show non-muted tabs
+function LogFilterGroup:UpdateTinyTabButtons()
+    local frame = LogFilterGroupTinyFrame
+    if not frame then return end
+
+    -- Hide all existing tab buttons
+    for _, btn in ipairs(frame.tabButtons) do
+        btn:Hide()
+    end
+
+    -- Collect non-muted tabs
+    local visibleTabs = {}
+    for _, tab in ipairs(self.tabs) do
+        if not tab.muted then
+            table.insert(visibleTabs, tab)
+        end
+    end
+
+    -- Create or update tab buttons
+    local xOffset = 8
+    for i, tab in ipairs(visibleTabs) do
+        local btn = frame.tabButtons[i]
+
+        -- Create button if it doesn't exist
+        if not btn then
+            btn = CreateFrame("Button", nil, frame)
+            btn:SetHeight(16)
+            btn:SetBackdrop({
+                bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                tile = false,
+                edgeSize = 8,
+                insets = { left = 2, right = 2, top = 2, bottom = 2 }
+            })
+
+            local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            text:SetPoint("CENTER", btn, "CENTER", 0, 0)
+            btn.text = text
+
+            frame.tabButtons[i] = btn
+        end
+
+        -- Update button
+        btn.tabId = tab.id
+        btn.tabName = tab.name  -- Store tab name for tooltip
+
+        -- Ensure text element exists before using it
+        if not btn.text then
+            local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            text:SetPoint("CENTER", btn, "CENTER", 0, 0)
+            btn.text = text
+        end
+
+        btn.text:SetText(tab.name)
+
+        -- Calculate width based on text (with fallback for safety)
+        local textWidth = btn.text:GetStringWidth() or 50
+        btn:SetWidth(math.max(textWidth + 12, 30))
+
+        -- Position button
+        btn:ClearAllPoints()
+        btn:SetPoint("TOPLEFT", frame, "TOPLEFT", xOffset, -5)
+        xOffset = xOffset + btn:GetWidth() + 4
+
+        -- Update appearance based on active state (unless it's flashing)
+        local isActive = (tab.id == self.activeTabId)
+        if not btn.isFlashing then
+            if isActive then
+                btn:SetBackdropColor(0.2, 0.4, 0.6, 0.9)
+                btn:SetBackdropBorderColor(0.4, 0.6, 0.8, 1)
+                btn.text:SetTextColor(1, 1, 1, 1)
+            else
+                btn:SetBackdropColor(0.1, 0.1, 0.1, 0.7)
+                btn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+                btn.text:SetTextColor(0.7, 0.7, 0.7, 1)
+            end
+        end
+
+        -- Set click handler
+        btn:SetScript("OnClick", function()
+            LogFilterGroup:SwitchTinyTab(this.tabId)
+        end)
+
+        btn:Show()
     end
 end

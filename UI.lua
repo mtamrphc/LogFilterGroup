@@ -297,7 +297,7 @@ end
 
 -- Helper function to truncate message if it's too long and add '...' if truncated
 -- Returns: displayText, isTruncated
-local function TruncateMessage(message, maxWidth)
+function LogFilterGroup.TruncateMessage(message, maxWidth)
     -- Calculate visual character count (excluding hidden item link codes)
     -- Item links are: |Hitem:12345:0:0:0|h[Display Name]|h
     -- Only [Display Name] is visible, but the whole thing counts in string length
@@ -411,7 +411,7 @@ local function TruncateMessage(message, maxWidth)
                 if linkEnd then
                     -- Find the second |h that closes the link
                     local secondEnd = string.find(message, "|h", linkEnd + 2)
-                    if secondEnd and secondEnd <= maxChars then
+                    if secondEnd and secondEnd <= msgLen then
                         -- The whole link fits, truncate after it
                         truncatePos = secondEnd + 1
                     else
@@ -1535,63 +1535,122 @@ end
 
 -- Flash a tab to draw attention to new messages
 function LogFilterGroup:FlashTab(tabId)
+    -- Flash in main UI
     local frame = LogFilterGroupFrame
-    if not frame or not frame.tabButtons then return end
+    if frame and frame.tabButtons then
+        -- Find the tab button
+        local tabButton = nil
+        for _, button in ipairs(frame.tabButtons) do
+            if button.tabId == tabId then
+                tabButton = button
+                break
+            end
+        end
 
-    -- Find the tab button
-    local tabButton = nil
-    for _, button in ipairs(frame.tabButtons) do
-        if button.tabId == tabId then
-            tabButton = button
-            break
+        if tabButton then
+            -- Mark tab as flashing
+            tabButton.isFlashing = true
+            tabButton.flashElapsed = 0
+
+            -- Create OnUpdate handler for flashing effect
+            if not tabButton.flashScript then
+                tabButton.flashScript = true
+                tabButton:SetScript("OnUpdate", function()
+                    if not this.isFlashing then return end
+
+                    this.flashElapsed = this.flashElapsed + arg1
+
+                    -- Flash every 0.5 seconds
+                    local flashCycle = math.mod(this.flashElapsed, 1.0)
+                    if flashCycle < 0.5 then
+                        -- Bright yellow/gold
+                        this:SetBackdropColor(0.8, 0.6, 0.1, 1)
+                        this.text:SetTextColor(1, 1, 0.5, 1)
+                    else
+                        -- Normal inactive color
+                        this:SetBackdropColor(0.08, 0.08, 0.08, 1)
+                        this.text:SetTextColor(0.6, 0.6, 0.6, 1)
+                    end
+                end)
+            end
         end
     end
 
-    if not tabButton then return end
-
-    -- Mark tab as flashing
-    tabButton.isFlashing = true
-    tabButton.flashElapsed = 0
-
-    -- Create OnUpdate handler for flashing effect
-    if not tabButton.flashScript then
-        tabButton.flashScript = true
-        tabButton:SetScript("OnUpdate", function()
-            if not this.isFlashing then return end
-
-            this.flashElapsed = this.flashElapsed + arg1
-
-            -- Flash every 0.5 seconds
-            local flashCycle = math.mod(this.flashElapsed, 1.0)
-            if flashCycle < 0.5 then
-                -- Bright yellow/gold
-                this:SetBackdropColor(0.8, 0.6, 0.1, 1)
-                this.text:SetTextColor(1, 1, 0.5, 1)
-            else
-                -- Normal inactive color
-                this:SetBackdropColor(0.08, 0.08, 0.08, 1)
-                this.text:SetTextColor(0.6, 0.6, 0.6, 1)
+    -- Flash in Tiny UI
+    local tinyFrame = LogFilterGroupTinyFrame
+    if tinyFrame and tinyFrame.tabButtons then
+        -- Find the tab button
+        local tabButton = nil
+        for _, button in ipairs(tinyFrame.tabButtons) do
+            if button.tabId == tabId then
+                tabButton = button
+                break
             end
-        end)
+        end
+
+        if tabButton then
+            -- Mark tab as flashing
+            tabButton.isFlashing = true
+            tabButton.flashElapsed = 0
+
+            -- Create OnUpdate handler for flashing effect
+            if not tabButton.flashScript then
+                tabButton.flashScript = true
+                tabButton:SetScript("OnUpdate", function()
+                    if not this.isFlashing then return end
+
+                    this.flashElapsed = this.flashElapsed + arg1
+
+                    -- Flash every 0.5 seconds
+                    local flashCycle = math.mod(this.flashElapsed, 1.0)
+                    if flashCycle < 0.5 then
+                        -- Bright yellow/gold
+                        this:SetBackdropColor(0.8, 0.6, 0.1, 1)
+                        this.text:SetTextColor(1, 1, 0.5, 1)
+                    else
+                        -- Normal inactive color
+                        this:SetBackdropColor(0.1, 0.1, 0.1, 0.7)
+                        this.text:SetTextColor(0.7, 0.7, 0.7, 1)
+                    end
+                end)
+            end
+        end
     end
 end
 
 -- Stop flashing a tab
 function LogFilterGroup:StopFlashingTab(tabId)
+    -- Stop flashing in main UI
     local frame = LogFilterGroupFrame
-    if not frame or not frame.tabButtons then return end
-
-    -- Find the tab button
-    for _, button in ipairs(frame.tabButtons) do
-        if button.tabId == tabId then
-            button.isFlashing = false
-            button.flashElapsed = 0
-            break
+    if frame and frame.tabButtons then
+        -- Find the tab button
+        for _, button in ipairs(frame.tabButtons) do
+            if button.tabId == tabId then
+                button.isFlashing = false
+                button.flashElapsed = 0
+                break
+            end
         end
+
+        -- Update tab appearance to restore proper colors
+        self:UpdateTabAppearance()
     end
 
-    -- Update tab appearance to restore proper colors
-    self:UpdateTabAppearance()
+    -- Stop flashing in Tiny UI
+    local tinyFrame = LogFilterGroupTinyFrame
+    if tinyFrame and tinyFrame.tabButtons then
+        -- Find the tab button
+        for _, button in ipairs(tinyFrame.tabButtons) do
+            if button.tabId == tabId then
+                button.isFlashing = false
+                button.flashElapsed = 0
+                break
+            end
+        end
+
+        -- Update Tiny tab appearance to restore proper colors
+        self:UpdateTinyTabButtons()
+    end
 end
 
 -- Update the display
@@ -1701,7 +1760,7 @@ function LogFilterGroup:UpdateDisplay()
                 messageWidth = 50
             end
 
-            local displayText, isTruncated = TruncateMessage(data.message, messageWidth)
+            local displayText, isTruncated = LogFilterGroup.TruncateMessage(data.message, messageWidth)
             row.message:SetText(displayText)
             row.time:SetText(self:GetTimeAgo(data.timestamp))
 

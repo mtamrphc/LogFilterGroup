@@ -62,7 +62,8 @@ local defaults = {
     -- Window position data
     mainFramePosition = nil,  -- Will store {point, xOfs, yOfs}
     mainFrameSize = nil,      -- Will store {width, height}
-    tinyFramePosition = nil   -- Will store {point, xOfs, yOfs}
+    tinyFramePosition = nil,  -- Will store {point, xOfs, yOfs}
+    tinyFrameSize = nil        -- Will store {width, height}
 }
 
 -- Find tab by ID
@@ -210,6 +211,7 @@ function LogFilterGroup:Initialize()
     self.mainFramePosition = LogFilterGroupDB.mainFramePosition
     self.mainFrameSize = LogFilterGroupDB.mainFrameSize
     self.tinyFramePosition = LogFilterGroupDB.tinyFramePosition
+    self.tinyFrameSize = LogFilterGroupDB.tinyFrameSize
 
     -- Migrate old message structure to new one (if needed)
     local migrated = false
@@ -389,6 +391,7 @@ function LogFilterGroup:SaveSettings()
     LogFilterGroupDB.mainFramePosition = self.mainFramePosition
     LogFilterGroupDB.mainFrameSize = self.mainFrameSize
     LogFilterGroupDB.tinyFramePosition = self.tinyFramePosition
+    LogFilterGroupDB.tinyFrameSize = self.tinyFrameSize
 end
 
 -- Save main frame position and size
@@ -413,7 +416,7 @@ function LogFilterGroup:SaveMainFramePosition()
     self:SaveSettings()
 end
 
--- Save tiny frame position
+-- Save tiny frame position and size
 function LogFilterGroup:SaveTinyFramePosition()
     local frame = LogFilterGroupTinyFrame
     if not frame then return end
@@ -423,6 +426,12 @@ function LogFilterGroup:SaveTinyFramePosition()
         point = point,
         xOfs = xOfs,
         yOfs = yOfs
+    }
+
+    -- Save size
+    self.tinyFrameSize = {
+        width = frame:GetWidth(),
+        height = frame:GetHeight()
     }
 
     self:SaveSettings()
