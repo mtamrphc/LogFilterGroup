@@ -601,6 +601,7 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")  -- All numbered channels (General, Trade, World, LocalDefense, etc.)
 eventFrame:RegisterEvent("CHAT_MSG_YELL")
 eventFrame:RegisterEvent("CHAT_MSG_SAY")
+eventFrame:RegisterEvent("CHAT_MSG_WHISPER")  -- Incoming whispers
 eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")  -- System messages (invite declined, already in group, etc.)
 eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")  -- Party member joins/leaves
 eventFrame:RegisterEvent("PLAYER_LOGOUT")
@@ -620,7 +621,7 @@ eventFrame:SetScript("OnEvent", function()
                 LogFilterGroup.lastCleanup = currentTime
             end
         end)
-    elseif event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" then
+    elseif event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" or event == "CHAT_MSG_WHISPER" then
         local message = arg1
         local sender = arg2
 
@@ -661,7 +662,7 @@ eventFrame:SetScript("OnEvent", function()
             end
 
             -- Debug output to help diagnose issues
-            if LogFilterGroup.debugMode and (event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY") then
+            if LogFilterGroup.debugMode and (event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" or event == "CHAT_MSG_WHISPER") then
                 DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup [" .. event .. "]: Checking message from " .. sender .. ": " .. message)
             end
             LogFilterGroup:ParseMessage(sender, message)
