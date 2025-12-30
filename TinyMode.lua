@@ -137,11 +137,32 @@ function LogFilterGroup:CreateTinyModeFrame()
     end)
     frame.soundButton = soundButton
 
+    -- Configure Tab button
+    local configButton = CreateFrame("Button", nil, frame)
+    configButton:SetWidth(12)
+    configButton:SetHeight(12)
+    configButton:SetPoint("RIGHT", soundButton, "LEFT", -2, 0)
+    configButton:SetNormalTexture("Interface\\Icons\\INV_Misc_Wrench_01")
+    configButton:SetPushedTexture("Interface\\Icons\\INV_Misc_Wrench_01")
+    configButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+    configButton:SetScript("OnClick", function()
+        LogFilterGroup:ShowConfigureWindow()
+    end)
+    configButton:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_LEFT")
+        GameTooltip:SetText("Configure Tab")
+        GameTooltip:Show()
+    end)
+    configButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    frame.configButton = configButton
+
     -- Clear messages button
     local clearButton = CreateFrame("Button", nil, frame)
     clearButton:SetWidth(12)
     clearButton:SetHeight(12)
-    clearButton:SetPoint("RIGHT", soundButton, "LEFT", -2, 0)
+    clearButton:SetPoint("RIGHT", configButton, "LEFT", -2, 0)
     clearButton:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
     clearButton:SetPushedTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Down")
     clearButton:SetHighlightTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")

@@ -2257,15 +2257,22 @@ function LogFilterGroup:ShowConfigureWindow()
             LogFilterGroup:ShowInputDialog("Enter Tab Name", "New Tab", function(name)
                 if name and name ~= "" then
                     local newTab = LogFilterGroup:AddTab(name)
-                    -- Switch to the newly created tab in the main UI
+                    -- Switch to the newly created tab
                     LogFilterGroup.activeTabId = newTab.id
                     -- Update config window to show new tab
                     LogFilterGroup.configTabIndex = table.getn(LogFilterGroup.tabs)
                     LogFilterGroup:UpdateConfigureWindow()
-                    -- Refresh main UI to show the new active tab
-                    if LogFilterGroupFrame then
-                        LogFilterGroup:RefreshTabButtons()
-                        LogFilterGroup:UpdateDisplay()
+                    -- Refresh UI based on current mode
+                    if LogFilterGroup.inTinyMode then
+                        -- In Tiny Mode, update the tiny display and tab buttons
+                        LogFilterGroup:UpdateTinyTabButtons()
+                        LogFilterGroup:UpdateTinyDisplay()
+                    else
+                        -- In Main UI mode, refresh the display
+                        if LogFilterGroupFrame then
+                            LogFilterGroup:RefreshTabButtons()
+                            LogFilterGroup:UpdateDisplay()
+                        end
                     end
                 end
             end)
@@ -2497,12 +2504,19 @@ function LogFilterGroup:ShowConfigureWindow()
                             else
                                 configFrame:Hide()
                             end
-                            -- Recreate the main frame to rebuild tabs
-                            if LogFilterGroupFrame then
-                                LogFilterGroupFrame:Hide()
-                                LogFilterGroupFrame = nil
+                            -- Refresh UI based on current mode
+                            if LogFilterGroup.inTinyMode then
+                                -- In Tiny Mode, just update the tiny display and tab buttons
+                                LogFilterGroup:UpdateTinyTabButtons()
+                                LogFilterGroup:UpdateTinyDisplay()
+                            else
+                                -- In Main UI mode, recreate the main frame to rebuild tabs
+                                if LogFilterGroupFrame then
+                                    LogFilterGroupFrame:Hide()
+                                    LogFilterGroupFrame = nil
+                                end
+                                LogFilterGroup:ShowFrame()
                             end
-                            LogFilterGroup:ShowFrame()
                         end
                     end
                 )
@@ -2572,12 +2586,19 @@ function LogFilterGroup:ShowConfigureWindow()
                 currentTab.whisperTemplate = configFrame.whisperInput:GetText()
                 currentTab.autoSendWhisper = configFrame.useTemplateCheckbox:GetChecked()
                 LogFilterGroup:SaveSettings()
-                -- Refresh main UI tabs to show updated name
-                if LogFilterGroupFrame then
-                    LogFilterGroupFrame:Hide()
-                    LogFilterGroupFrame = nil
+                -- Refresh UI based on current mode
+                if LogFilterGroup.inTinyMode then
+                    -- In Tiny Mode, just update the tiny display and tab buttons
+                    LogFilterGroup:UpdateTinyTabButtons()
+                    LogFilterGroup:UpdateTinyDisplay()
+                else
+                    -- In Main UI mode, refresh the main frame
+                    if LogFilterGroupFrame then
+                        LogFilterGroupFrame:Hide()
+                        LogFilterGroupFrame = nil
+                    end
+                    LogFilterGroup:ShowFrame()
                 end
-                LogFilterGroup:ShowFrame()
                 print("LogFilterGroup: Tab configuration saved!")
             end
             configFrame:Hide()
