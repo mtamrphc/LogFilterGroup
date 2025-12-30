@@ -2031,8 +2031,10 @@ function LogFilterGroup:ShowTinyFrame()
     if not LogFilterGroupTinyFrame then
         self:CreateTinyModeFrame()
     end
+    self:UpdateTinyTabButtons()
     LogFilterGroupTinyFrame:Show()
     self:UpdateTinyDisplay()
+    self:UpdateTinySoundButton()
     LogFilterGroupDB.windowVisible = true
     self:SaveData()
 end
