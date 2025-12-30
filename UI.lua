@@ -3,7 +3,7 @@
 local FRAME_WIDTH = 500
 local FRAME_HEIGHT = 400
 local ROW_HEIGHT = 30  -- Single line per row (WoW 1.12 doesn't support word wrap on FontStrings)
-local ROWS_VISIBLE = 10
+local ROWS_VISIBLE = 40
 
 -- Create a simple input dialog popup
 function LogFilterGroup:ShowInputDialog(title, defaultText, callback)
@@ -21,7 +21,8 @@ function LogFilterGroup:ShowInputDialog(title, defaultText, callback)
             edgeSize = 32,
             insets = { left = 11, right = 12, top = 12, bottom = 11 }
         })
-        dialog:SetFrameStrata("DIALOG")
+        dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+        dialog:SetFrameLevel(200)
         dialog:EnableMouse(true)
         dialog:Hide()
 
@@ -89,6 +90,71 @@ function LogFilterGroup:ShowInputDialog(title, defaultText, callback)
     dialog.callback = callback
     dialog:Show()
     dialog.input:SetFocus()
+end
+
+-- Show Yes/No confirmation dialog
+function LogFilterGroup:ShowConfirmDialog(title, message, yesCallback)
+    -- Create popup frame if it doesn't exist
+    if not LogFilterGroupConfirmDialog then
+        local dialog = CreateFrame("Frame", "LogFilterGroupConfirmDialog", UIParent)
+        dialog:SetWidth(300)
+        dialog:SetHeight(120)
+        dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        dialog:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true,
+            tileSize = 32,
+            edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 }
+        })
+        dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+        dialog:SetFrameLevel(200)
+        dialog:EnableMouse(true)
+        dialog:Hide()
+
+        -- Title
+        local titleText = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        titleText:SetPoint("TOP", dialog, "TOP", 0, -18)
+        dialog.titleText = titleText
+
+        -- Message text
+        local messageText = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        messageText:SetPoint("TOP", dialog, "TOP", 0, -45)
+        messageText:SetWidth(260)
+        dialog.messageText = messageText
+
+        -- Yes button
+        local yesButton = CreateFrame("Button", nil, dialog, "GameMenuButtonTemplate")
+        yesButton:SetWidth(100)
+        yesButton:SetHeight(25)
+        yesButton:SetPoint("BOTTOM", dialog, "BOTTOM", -55, 15)
+        yesButton:SetText("Yes")
+        yesButton:SetScript("OnClick", function()
+            if dialog.yesCallback then
+                dialog.yesCallback()
+            end
+            dialog:Hide()
+        end)
+        dialog.yesButton = yesButton
+
+        -- No button
+        local noButton = CreateFrame("Button", nil, dialog, "GameMenuButtonTemplate")
+        noButton:SetWidth(100)
+        noButton:SetHeight(25)
+        noButton:SetPoint("BOTTOM", dialog, "BOTTOM", 55, 15)
+        noButton:SetText("No")
+        noButton:SetScript("OnClick", function()
+            dialog:Hide()
+        end)
+        dialog.noButton = noButton
+    end
+
+    local dialog = LogFilterGroupConfirmDialog
+    dialog.titleText:SetText(title)
+    dialog.messageText:SetText(message)
+    dialog.yesCallback = yesCallback
+    dialog:Show()
 end
 
 -- Show context menu for tab (right-click menu)
@@ -614,30 +680,33 @@ end
 -- Helper function to evaluate a simple expression (no parentheses)
 local function EvaluateSimpleExpression(message, expression, quoteMappings, placeholderResults)
     local lowerMessage = string.lower(message)
-    local lowerExpr = string.lower(expression)
 
-    -- Trim whitespace
-    lowerExpr = string.gsub(lowerExpr, "^%s*(.-)%s*$", "%1")
+    -- Trim whitespace from original expression first
+    expression = string.gsub(expression, "^%s*(.-)%s*$", "%1")
+
+    -- Check if this is a placeholder reference BEFORE lowercasing
+    if placeholderResults and placeholderResults[expression] ~= nil then
+        return placeholderResults[expression]
+    end
+
+    -- Now convert to lowercase for operator checking
+    local lowerExpr = string.lower(expression)
 
     if lowerExpr == "" then
         return true
     end
 
-    -- Check if this is a placeholder reference
-    if placeholderResults and placeholderResults[expression] ~= nil then
-        return placeholderResults[expression]
-    end
-
     -- Check for OR operator (lower precedence)
     if string.find(lowerExpr, " or ") then
-        -- Split by OR
+        -- Split by OR using ORIGINAL expression to preserve case
         local orTerms = {}
         local currentTerm = ""
         local i = 1
-        while i <= string.len(lowerExpr) do
-            local char = string.sub(lowerExpr, i, i)
-            -- Check if we're at " or "
-            if string.sub(lowerExpr, i, i+3) == " or " then
+        while i <= string.len(expression) do
+            local char = string.sub(expression, i, i)
+            local lowerChar = string.lower(char)
+            -- Check if we're at " or " (case-insensitive)
+            if string.lower(string.sub(expression, i, i+3)) == " or " then
                 table.insert(orTerms, currentTerm)
                 currentTerm = ""
                 i = i + 4
@@ -658,14 +727,14 @@ local function EvaluateSimpleExpression(message, expression, quoteMappings, plac
 
     -- Check for AND operator (higher precedence)
     elseif string.find(lowerExpr, " and ") then
-        -- Split by AND
+        -- Split by AND using ORIGINAL expression to preserve case
         local andTerms = {}
         local currentTerm = ""
         local i = 1
-        while i <= string.len(lowerExpr) do
-            local char = string.sub(lowerExpr, i, i)
-            -- Check if we're at " and "
-            if string.sub(lowerExpr, i, i+4) == " and " then
+        while i <= string.len(expression) do
+            local char = string.sub(expression, i, i)
+            -- Check if we're at " and " (case-insensitive)
+            if string.lower(string.sub(expression, i, i+4)) == " and " then
                 table.insert(andTerms, currentTerm)
                 currentTerm = ""
                 i = i + 5
@@ -680,7 +749,7 @@ local function EvaluateSimpleExpression(message, expression, quoteMappings, plac
         for _, term in ipairs(andTerms) do
             term = string.gsub(term, "^%s*(.-)%s*$", "%1")
 
-            -- Check if AND term is a placeholder
+            -- Check if AND term is a placeholder (BEFORE lowercasing!)
             local termResult
             if placeholderResults and placeholderResults[term] ~= nil then
                 termResult = placeholderResults[term]
@@ -731,28 +800,60 @@ function LogFilterGroup.MatchesFilter(message, filterText)
         return true
     end
 
+    -- Strip newlines from filter text (allows multi-line formatting in config)
+    filterText = string.gsub(filterText, "\n", " ")
+    filterText = string.gsub(filterText, "\r", "")
+
     -- Strip item/enchant/spell links before filtering
     message = StripLinks(message)
 
     -- Process quotes first to extract quoted phrases
     local quoteMappings = {}
-    local lowerFilter
-    lowerFilter, quoteMappings = ProcessQuotes(filterText)
+    local processedFilter
+    processedFilter, quoteMappings = ProcessQuotes(filterText)
 
     local placeholderCount = 0
     local placeholderResults = {}
 
     -- Process parentheses recursively (innermost first)
-    while string.find(lowerFilter, "%(") do
-        -- Find innermost parentheses
-        local startPos, endPos = string.find(lowerFilter, "%b()")
-        if not startPos then break end
+    while string.find(processedFilter, "%(") do
+        -- Find innermost parentheses by looking for a closing paren without nested parens
+        local startPos = nil
+        local endPos = nil
+
+        -- Scan through the string to find innermost parentheses
+        local i = 1
+        while i <= string.len(processedFilter) do
+            if string.sub(processedFilter, i, i) == "(" then
+                -- Found an opening paren, this could be our innermost
+                startPos = i
+            elseif string.sub(processedFilter, i, i) == ")" then
+                -- Found a closing paren - this closes the most recent opening paren (which is innermost)
+                if startPos then
+                    endPos = i
+                    break
+                end
+            end
+            i = i + 1
+        end
+
+        if not startPos or not endPos then break end
 
         -- Extract expression inside parentheses (without the parentheses)
-        local innerExpr = string.sub(lowerFilter, startPos + 1, endPos - 1)
+        local innerExpr = string.sub(processedFilter, startPos + 1, endPos - 1)
+
+        -- Debug output
+        if LogFilterGroup.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG MatchesFilter: Evaluating inner expression: '" .. innerExpr .. "'")
+        end
 
         -- Evaluate the inner expression with quote mappings and placeholder results
         local result = EvaluateSimpleExpression(message, innerExpr, quoteMappings, placeholderResults)
+
+        -- Debug output
+        if LogFilterGroup.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG MatchesFilter: Inner expression result: " .. tostring(result))
+        end
 
         -- Create a unique placeholder
         placeholderCount = placeholderCount + 1
@@ -760,7 +861,12 @@ function LogFilterGroup.MatchesFilter(message, filterText)
         placeholderResults[placeholder] = result
 
         -- Replace the parenthesized expression with the placeholder
-        lowerFilter = string.sub(lowerFilter, 1, startPos - 1) .. placeholder .. string.sub(lowerFilter, endPos + 1)
+        processedFilter = string.sub(processedFilter, 1, startPos - 1) .. placeholder .. string.sub(processedFilter, endPos + 1)
+
+        -- Debug output
+        if LogFilterGroup.debugMode then
+            DEFAULT_CHAT_FRAME:AddMessage("DEBUG MatchesFilter: Filter after substitution: '" .. processedFilter .. "'")
+        end
     end
 
     -- Evaluate the final expression, treating placeholders as search terms
@@ -837,7 +943,19 @@ function LogFilterGroup.MatchesFilter(message, filterText)
         end
     end
 
-    return EvaluateWithPlaceholders(lowerFilter)
+    -- Debug output
+    if LogFilterGroup.debugMode then
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG MatchesFilter: Final filter to evaluate: '" .. processedFilter .. "'")
+    end
+
+    local finalResult = EvaluateWithPlaceholders(processedFilter)
+
+    -- Debug output
+    if LogFilterGroup.debugMode then
+        DEFAULT_CHAT_FRAME:AddMessage("DEBUG MatchesFilter: Final result: " .. tostring(finalResult))
+    end
+
+    return finalResult
 end
 
 -- Helper function to check if a message should be excluded based on exclude filter
@@ -921,6 +1039,11 @@ function LogFilterGroup:CreateFrame()
     -- Close button
     local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
+    closeButton:SetScript("OnClick", function()
+        frame:Hide()
+        LogFilterGroupDB.windowVisible = false
+        LogFilterGroup:SaveData()
+    end)
     closeButton:SetScript("OnEnter", function()
         GameTooltip:SetOwner(this, "ANCHOR_LEFT")
         GameTooltip:SetText("Close Window")
@@ -974,34 +1097,33 @@ function LogFilterGroup:CreateFrame()
     end)
     frame.soundButton = soundButton
 
-    -- Lock button (global lock for all tabs)
-    local lockButton = CreateFrame("Button", nil, frame)
-    lockButton:SetWidth(16)
-    lockButton:SetHeight(16)
-    lockButton:SetPoint("RIGHT", soundButton, "LEFT", -2, 0)
-    lockButton:SetNormalTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Up")
-    lockButton:SetPushedTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Down")
-    lockButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
-    lockButton:SetScript("OnClick", function()
-        LogFilterGroup.globalLocked = not LogFilterGroup.globalLocked
-        LogFilterGroup:SaveSettings()
-        LogFilterGroup:UpdateLockState()
+    -- Configure Tab button (wrench icon, next to sound button)
+    local configureButton = CreateFrame("Button", nil, frame)
+    configureButton:SetWidth(16)
+    configureButton:SetHeight(16)
+    configureButton:SetPoint("RIGHT", soundButton, "LEFT", -2, 0)
+    configureButton:SetNormalTexture("Interface\\Icons\\INV_Misc_Wrench_01")
+    configureButton:SetPushedTexture("Interface\\Icons\\INV_Misc_Wrench_01")
+    configureButton:SetHighlightTexture("Interface\\Icons\\INV_Misc_Wrench_01")
+    configureButton:GetHighlightTexture():SetAlpha(0.5)
+    configureButton:SetScript("OnClick", function()
+        LogFilterGroup:ShowConfigureWindow()
     end)
-    lockButton:SetScript("OnEnter", function()
+    configureButton:SetScript("OnEnter", function()
         GameTooltip:SetOwner(this, "ANCHOR_LEFT")
-        GameTooltip:SetText("Toggle Filter Lock\n|cFFFFFFFFLock to hide filter inputs|r")
+        GameTooltip:SetText("Configure Tab\n|cFFFFFFFFEdit tab settings, filters, and whisper template|r")
         GameTooltip:Show()
     end)
-    lockButton:SetScript("OnLeave", function()
+    configureButton:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
-    frame.lockButton = lockButton
+    frame.configureButton = configureButton
 
-    -- Clear icon button (next to lock button)
+    -- Clear icon button (next to configure button)
     local clearIconButton = CreateFrame("Button", nil, frame)
     clearIconButton:SetWidth(16)
     clearIconButton:SetHeight(16)
-    clearIconButton:SetPoint("RIGHT", lockButton, "LEFT", -2, 0)
+    clearIconButton:SetPoint("RIGHT", configureButton, "LEFT", -2, 0)
     clearIconButton:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
     clearIconButton:SetPushedTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Down")
     clearIconButton:SetHighlightTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
@@ -1090,137 +1212,10 @@ function LogFilterGroup:CreateFrame()
     frame.tabButtons = {}
     frame.currentTab = self.activeTabId
 
-    -- Filter label
-    local filterLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    filterLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -55)
-    filterLabel:SetText("Filter:")
-    frame.filterLabel = filterLabel
-
-    -- Filter input box (shared by all tabs)
-    local filterInput = CreateFrame("EditBox", "LogFilterGroupFilterInput", frame)
-    filterInput:SetHeight(20)
-    filterInput:SetWidth(200)  -- Fixed width to avoid recalculation during resize
-    filterInput:SetPoint("LEFT", filterLabel, "RIGHT", 3, 0)
-    filterInput:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
-    filterInput:SetBackdropColor(0, 0, 0, 0.8)
-    filterInput:SetFontObject(GameFontNormal)
-    filterInput:SetTextInsets(5, 5, 0, 0)
-    filterInput:SetAutoFocus(false)
-    filterInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
-    filterInput:SetScript("OnEnterPressed", function() this:ClearFocus() end)
-    filterInput:SetScript("OnTextChanged", function()
-        -- Skip if we're programmatically updating the inputs
-        if LogFilterGroup.updatingTabInputs then
-            return
-        end
-
-        local tab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
-        if tab then
-            tab.filterText = this:GetText()
-            LogFilterGroup:SaveSettings()
-            LogFilterGroup:UpdateDisplay()
-        end
-    end)
-    frame.filterInput = filterInput
-
-    -- Exclude label
-    local excludeLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    excludeLabel:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -7)
-    excludeLabel:SetText("Exclude:")
-    frame.excludeLabel = excludeLabel
-
-    -- Exclude input box (shared by all tabs)
-    local excludeInput = CreateFrame("EditBox", "LogFilterGroupExcludeInput", frame)
-    excludeInput:SetHeight(20)
-    excludeInput:SetWidth(200)  -- Fixed width to avoid recalculation during resize
-    excludeInput:SetPoint("LEFT", excludeLabel, "RIGHT", 3, 0)
-    excludeInput:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
-    excludeInput:SetBackdropColor(0, 0, 0, 0.8)
-    excludeInput:SetFontObject(GameFontNormal)
-    excludeInput:SetTextInsets(5, 5, 0, 0)
-    excludeInput:SetAutoFocus(false)
-    excludeInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
-    excludeInput:SetScript("OnEnterPressed", function() this:ClearFocus() end)
-    excludeInput:SetScript("OnTextChanged", function()
-        -- Skip if we're programmatically updating the inputs
-        if LogFilterGroup.updatingTabInputs then
-            return
-        end
-
-        local tab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
-        if tab then
-            tab.excludeText = this:GetText()
-            LogFilterGroup:SaveSettings()
-            LogFilterGroup:UpdateDisplay()
-        end
-    end)
-    frame.excludeInput = excludeInput
-
-    -- Auto-send whisper checkbox
-    local autoSendCheckbox = CreateFrame("CheckButton", "LogFilterGroupAutoSendCheckbox", frame, "UICheckButtonTemplate")
-    autoSendCheckbox:SetWidth(20)
-    autoSendCheckbox:SetHeight(20)
-    autoSendCheckbox:SetPoint("TOPLEFT", excludeLabel, "BOTTOMLEFT", 0, -7)
-    autoSendCheckbox:SetScript("OnClick", function()
-        local tab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
-        if tab then
-            tab.autoSendWhisper = this:GetChecked()
-            LogFilterGroup:SaveSettings()
-        end
-    end)
-    frame.autoSendCheckbox = autoSendCheckbox
-
-    local autoSendLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    autoSendLabel:SetPoint("LEFT", autoSendCheckbox, "RIGHT", 5, 0)
-    autoSendLabel:SetText("Use Template")
-    frame.autoSendLabel = autoSendLabel
-
-    -- Whisper message input box (shared by all tabs)
-    local whisperMsgInput = CreateFrame("EditBox", "LogFilterGroupWhisperMsgInput", frame)
-    whisperMsgInput:SetHeight(20)
-    whisperMsgInput:SetWidth(200)  -- Fixed width to avoid recalculation during resize
-    whisperMsgInput:SetPoint("LEFT", autoSendLabel, "RIGHT", 5, 0)
-    whisperMsgInput:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
-    whisperMsgInput:SetBackdropColor(0, 0, 0, 0.8)
-    whisperMsgInput:SetFontObject(GameFontNormalSmall)
-    whisperMsgInput:SetTextInsets(5, 5, 0, 0)
-    whisperMsgInput:SetAutoFocus(false)
-    whisperMsgInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
-    whisperMsgInput:SetScript("OnEnterPressed", function() this:ClearFocus() end)
-    whisperMsgInput:SetScript("OnTextChanged", function()
-        local tab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
-        if tab then
-            tab.whisperTemplate = this:GetText()
-            LogFilterGroup:SaveSettings()
-        end
-    end)
-    frame.whisperMsgInput = whisperMsgInput
-
-    -- Scroll frame
+    -- Scroll frame (moved up since Configure button is removed)
     local scrollFrame = CreateFrame("ScrollFrame", "LogFilterGroupScrollFrame", frame, "FauxScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -115)
-    scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 25)
+    scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -55)
+    scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 22)
     scrollFrame:SetScript("OnVerticalScroll", function()
         FauxScrollFrame_OnVerticalScroll(ROW_HEIGHT, function() LogFilterGroup:UpdateDisplay() end)
     end)
@@ -1402,8 +1397,6 @@ function LogFilterGroup:CreateFrame()
         isResizing = false
 
         -- Now update everything after resize completes
-        LogFilterGroup:UpdateEditBoxWidths()  -- Update EditBox widths first
-        LogFilterGroup:UpdateLockState()
         LogFilterGroup:UpdateDisplay()
         LogFilterGroup:SaveMainFramePosition()
     end)
@@ -1411,53 +1404,8 @@ function LogFilterGroup:CreateFrame()
     -- Create initial tab buttons
     self:RefreshTabButtons()
 
-    -- Set initial EditBox widths based on frame size
-    self:UpdateEditBoxWidths()
-
     -- Show initial tab
     self:ShowTab(self.activeTabId)
-end
-
--- Update EditBox widths based on current frame width
-function LogFilterGroup:UpdateEditBoxWidths()
-    local frame = LogFilterGroupFrame
-    if not frame then
-        return
-    end
-
-    local frameWidth = frame:GetWidth()
-    local rightMargin = 8  -- Space from right edge
-
-    -- Calculate width for each EditBox based on its actual position
-    if frame.filterInput then
-        local left = frame.filterInput:GetLeft()
-        local frameLeft = frame:GetLeft()
-        if left and frameLeft then
-            local offsetFromLeft = left - frameLeft
-            local availableWidth = frameWidth - offsetFromLeft - rightMargin
-            frame.filterInput:SetWidth(math.max(150, availableWidth))
-        end
-    end
-
-    if frame.excludeInput then
-        local left = frame.excludeInput:GetLeft()
-        local frameLeft = frame:GetLeft()
-        if left and frameLeft then
-            local offsetFromLeft = left - frameLeft
-            local availableWidth = frameWidth - offsetFromLeft - rightMargin
-            frame.excludeInput:SetWidth(math.max(150, availableWidth))
-        end
-    end
-
-    if frame.whisperMsgInput then
-        local left = frame.whisperMsgInput:GetLeft()
-        local frameLeft = frame:GetLeft()
-        if left and frameLeft then
-            local offsetFromLeft = left - frameLeft
-            local availableWidth = frameWidth - offsetFromLeft - rightMargin
-            frame.whisperMsgInput:SetWidth(math.max(150, availableWidth))
-        end
-    end
 end
 
 -- Refresh tab buttons (create/recreate dynamic tabs)
@@ -1470,6 +1418,11 @@ function LogFilterGroup:RefreshTabButtons()
     -- Don't refresh tabs if window is minimized
     if frame.isMinimized then
         return
+    end
+
+    -- Ensure we have at least one tab
+    if not self.tabs or table.getn(self.tabs) == 0 then
+        self:AddTab("New Tab")
     end
 
     -- Clear existing tab buttons
@@ -1552,96 +1505,30 @@ function LogFilterGroup:RefreshTabButtons()
         tabButton.tabId = tab.id
         tabButton.isDefault = tab.isDefault
 
-        -- Store click handlers
-        tabButton.leftClickHandler = function()
-            LogFilterGroup:ShowTab(tabButton.tabId)
-        end
-
-        tabButton.rightClickHandler = function()
-            -- Allow right-click menu for all tabs (default and custom)
-            LogFilterGroup:ShowTabContextMenu(tabButton)
-        end
-
-        -- Left click to switch tabs, right click for menu
+        -- Left click to switch tabs
         tabButton:SetScript("OnClick", function()
-            if arg1 == "LeftButton" then
-                this.leftClickHandler()
-            elseif arg1 == "RightButton" then
-                this.rightClickHandler()
-            end
+            LogFilterGroup:ShowTab(tabButton.tabId)
         end)
 
-        -- Also handle mouse down for better responsiveness
-        tabButton:SetScript("OnMouseDown", function()
-            if arg1 == "RightButton" then
-                this.rightClickHandler()
-            end
-        end)
-
-        -- Register for both left and right clicks, both up and down
-        tabButton:RegisterForClicks("LeftButtonUp", "RightButtonUp", "RightButtonDown")
+        -- Register for left click only
+        tabButton:RegisterForClicks("LeftButtonUp")
 
         table.insert(frame.tabButtons, tabButton)
     end
 
-    -- Add "+" button to create new tab (only if we have at least one tab)
-    if table.getn(frame.tabButtons) > 0 then
-        local addTabButton = CreateFrame("Button", "LogFilterGroupAddTab", frame)
-        addTabButton:SetWidth(30)
-        addTabButton:SetHeight(22)
-        addTabButton:SetPoint("LEFT", frame.tabButtons[table.getn(frame.tabButtons)], "RIGHT", 2, 0)
-        addTabButton:SetBackdrop({
-            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-            edgeFile = nil,
-            tile = false,
-            insets = { left = 0, right = 0, top = 0, bottom = 0 }
-        })
-        addTabButton:SetBackdropColor(0.08, 0.08, 0.08, 1)
-
-        local addText = addTabButton:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-        addText:SetPoint("CENTER", addTabButton, "CENTER", 0, 0)
-        addText:SetText("+")
-        addText:SetTextColor(0.5, 0.5, 0.5, 1)
-
-        addTabButton:SetScript("OnClick", function()
-            LogFilterGroup:ShowInputDialog("Enter Tab Name", "Custom Tab", function(name)
-                if name and name ~= "" then
-                    local newTab = LogFilterGroup:AddTab(name)
-                    LogFilterGroup:RefreshTabButtons()
-                    LogFilterGroup:ShowTab(newTab.id)
-                end
-            end)
-        end)
-
-        frame.addTabButton = addTabButton
-    end
+    -- Add Tab button moved to Configure Tab window
 
     -- Calculate how many rows of tabs we have and adjust content position
     local numRows = currentRow + 1
     local TAB_ROW_HEIGHT = TAB_HEIGHT + TAB_SPACING
     local contentYOffset = -(28 + (numRows * TAB_ROW_HEIGHT) + 5)  -- 28 = initial offset, 5 = spacing
 
-    -- Store contentYOffset for use in UpdateLockState
-    frame.contentYOffset = contentYOffset
-
-    -- Update positions of filter elements
-    if frame.filterLabel then
-        frame.filterLabel:ClearAllPoints()
-        frame.filterLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, contentYOffset)
+    -- Reposition scrollFrame to start below all tab rows
+    if frame.scrollFrame then
+        frame.scrollFrame:ClearAllPoints()
+        frame.scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, contentYOffset)
+        frame.scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 22)
     end
-
-    if frame.excludeLabel then
-        frame.excludeLabel:ClearAllPoints()
-        frame.excludeLabel:SetPoint("TOPLEFT", frame.filterLabel, "BOTTOMLEFT", 0, -7)
-    end
-
-    if frame.autoSendCheckbox then
-        frame.autoSendCheckbox:ClearAllPoints()
-        frame.autoSendCheckbox:SetPoint("TOPLEFT", frame.excludeLabel, "BOTTOMLEFT", 0, -7)
-    end
-
-    -- Scroll frame position is now fixed during creation - no need to reposition here
-    -- This eliminates expensive layout recalculations during resize
 
     -- Update active tab appearance
     self:UpdateTabAppearance()
@@ -1663,95 +1550,45 @@ function LogFilterGroup:UpdateTabAppearance()
     end
 end
 
--- Update lock state (enable/disable inputs based on global locked state)
-function LogFilterGroup:UpdateLockState()
-    local frame = LogFilterGroupFrame
-    if not frame then return end
-
-    local locked = self.globalLocked or false
-
-    -- Update lock button texture (use same icon, just change opacity/color when locked)
-    if locked then
-        frame.lockButton:SetNormalTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Disabled")
-        frame.lockButton:SetPushedTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Down")
-    else
-        frame.lockButton:SetNormalTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Up")
-        frame.lockButton:SetPushedTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Down")
-    end
-
-    -- Hide/show filter inputs and labels
-    if locked then
-        -- Hide all filter-related elements
-        frame.filterLabel:Hide()
-        frame.filterInput:Hide()
-
-        frame.excludeLabel:Hide()
-        frame.excludeInput:Hide()
-
-        if frame.excludeHelp then
-            frame.excludeHelp:Hide()
-        end
-
-        frame.autoSendCheckbox:Hide()
-        frame.autoSendLabel:Hide()
-        frame.whisperMsgInput:Hide()
-
-        -- Scroll frame uses fixed position - no repositioning needed
-        -- This prevents expensive layout recalculations during resize
-    else
-        -- Show all filter-related elements
-        frame.filterLabel:Show()
-        frame.filterInput:Show()
-
-        frame.excludeLabel:Show()
-        frame.excludeInput:Show()
-
-        if frame.excludeHelp then
-            frame.excludeHelp:Show()
-        end
-
-        frame.autoSendCheckbox:Show()
-        frame.autoSendLabel:Show()
-        frame.whisperMsgInput:Show()
-
-        -- Scroll frame uses fixed position - no repositioning needed
-        -- This prevents expensive layout recalculations during resize
-    end
-end
+-- Lock state feature removed - all configuration is now in Configure Tab window
 
 -- Show a specific tab
 function LogFilterGroup:ShowTab(tabId)
     local frame = LogFilterGroupFrame
     if not frame then return end
 
+    -- Ensure we have at least one tab
+    if not self.tabs or table.getn(self.tabs) == 0 then
+        -- Create a default tab if none exist
+        self:AddTab("New Tab")
+    end
+
     -- Verify tab exists, fallback to first tab if not
     if not self:GetTab(tabId) then
-        tabId = self.tabs[1].id
+        if self.tabs[1] then
+            tabId = self.tabs[1].id
+        else
+            return  -- No tabs available, can't continue
+        end
     end
 
     self.activeTabId = tabId
     frame.currentTab = tabId
 
-    -- Update tab button appearances
-    self:UpdateTabAppearance()
-
-    -- Update input fields with current tab's settings
-    local tab = self:GetTab(tabId)
-    if tab then
-        -- Set flag to prevent OnTextChanged from saving during programmatic updates
-        self.updatingTabInputs = true
-
-        frame.filterInput:SetText(tab.filterText or "")
-        frame.excludeInput:SetText(tab.excludeText or "")
-        frame.whisperMsgInput:SetText(tab.whisperTemplate or "")
-        frame.autoSendCheckbox:SetChecked(tab.autoSendWhisper)
-
-        -- Clear flag
-        self.updatingTabInputs = false
+    -- Sync config window to show this tab
+    for i, tab in ipairs(self.tabs) do
+        if tab.id == tabId then
+            self.configTabIndex = i
+            -- Update config window if it's open
+            if LogFilterGroupConfigFrame and LogFilterGroupConfigFrame:IsVisible() then
+                self:UpdateConfigureWindow()
+            end
+            break
+        end
     end
 
-    -- Update lock state
-    self:UpdateLockState()
+    -- Update tab button appearances
+    self:UpdateTabAppearance()
 
     -- Stop flashing this tab since it's now active
     self:StopFlashingTab(tabId)
@@ -1999,7 +1836,7 @@ function LogFilterGroup:UpdateDisplay()
 
     -- Calculate how many rows can fit in the current scroll frame height
     local scrollHeight = frame.scrollFrame:GetHeight()
-    local visibleRows = math.floor(scrollHeight / ROW_HEIGHT)
+    local visibleRows = math.ceil(scrollHeight / ROW_HEIGHT)
     if visibleRows > ROWS_VISIBLE then
         visibleRows = ROWS_VISIBLE
     end
@@ -2147,6 +1984,8 @@ function LogFilterGroup:ToggleFrame()
         -- Toggle Tiny frame instead
         if LogFilterGroupTinyFrame and LogFilterGroupTinyFrame:IsVisible() then
             LogFilterGroupTinyFrame:Hide()
+            LogFilterGroupDB.windowVisible = false
+            self:SaveData()
         else
             if not LogFilterGroupTinyFrame then
                 self:EnterTinyMode()
@@ -2154,18 +1993,48 @@ function LogFilterGroup:ToggleFrame()
                 LogFilterGroupTinyFrame:Show()
                 self:UpdateTinyDisplay()
             end
+            LogFilterGroupDB.windowVisible = true
+            self:SaveData()
         end
     else
         -- Toggle main frame
         if LogFilterGroupFrame:IsVisible() then
             LogFilterGroupFrame:Hide()
+            LogFilterGroupDB.windowVisible = false
+            self:SaveData()
         else
             LogFilterGroupFrame:Show()
             if not self.mainWindowMinimized then
                 self:UpdateDisplay()
             end
+            LogFilterGroupDB.windowVisible = true
+            self:SaveData()
         end
     end
+end
+
+-- Show main frame (used on login)
+function LogFilterGroup:ShowFrame()
+    if not LogFilterGroupFrame then
+        self:CreateFrame()
+    end
+    LogFilterGroupFrame:Show()
+    if not self.mainWindowMinimized then
+        self:UpdateDisplay()
+    end
+    LogFilterGroupDB.windowVisible = true
+    self:SaveData()
+end
+
+-- Show tiny frame (used on login)
+function LogFilterGroup:ShowTinyFrame()
+    if not LogFilterGroupTinyFrame then
+        self:CreateTinyModeFrame()
+    end
+    LogFilterGroupTinyFrame:Show()
+    self:UpdateTinyDisplay()
+    LogFilterGroupDB.windowVisible = true
+    self:SaveData()
 end
 
 -- Show help window
@@ -2224,7 +2093,7 @@ function LogFilterGroup:ShowHelpWindow()
 
             "|cFFFFD700Tab Management|r\n" ..
             "|cFFFFFFFF• Default Tabs:|r Find Group, Find Member, Professions\n" ..
-            "|cFFFFFFFF• Custom Tabs:|r Click '+' to create, right-click to rename/delete/mute\n" ..
+            "|cFFFFFFFF• Custom Tabs:|r Use Configure Tab menu to create/rename/delete/mute\n" ..
             "|cFFFFFFFF• Muted Tabs:|r No sound/flash notifications for new messages\n\n" ..
 
             "|cFFFFD700Filter Field|r\n" ..
@@ -2281,5 +2150,504 @@ function LogFilterGroup:ShowHelpWindow()
         LogFilterGroupHelpFrame:Hide()
     else
         LogFilterGroupHelpFrame:Show()
+    end
+end
+
+-- Show configuration window for current tab
+function LogFilterGroup:ShowConfigureWindow()
+    -- Initialize config tab index to match the active tab
+    if not self.configTabIndex then
+        for i, tab in ipairs(self.tabs) do
+            if tab.id == self.activeTabId then
+                self.configTabIndex = i
+                break
+            end
+        end
+        if not self.configTabIndex then
+            self.configTabIndex = 1
+        end
+    end
+
+    local tab = self.tabs[self.configTabIndex]
+    if not tab then
+        return
+    end
+
+    -- Create config frame if it doesn't exist
+    if not LogFilterGroupConfigFrame then
+        LogFilterGroupConfigFrame = CreateFrame("Frame", "LogFilterGroupConfigFrame", UIParent)
+        local configFrame = LogFilterGroupConfigFrame
+        configFrame:SetWidth(500)
+        configFrame:SetHeight(550)
+        configFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        configFrame:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true,
+            tileSize = 32,
+            edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 }
+        })
+        configFrame:SetMovable(true)
+        configFrame:EnableMouse(true)
+        configFrame:RegisterForDrag("LeftButton")
+        configFrame:SetScript("OnDragStart", function() this:StartMoving() end)
+        configFrame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
+        configFrame:SetFrameStrata("DIALOG")
+
+        -- Title
+        local title = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", configFrame, "TOP", 0, -15)
+        title:SetText("Configure Tabs")
+        configFrame.title = title
+
+        -- Tab navigation row
+        -- Previous Tab button
+        local prevTabButton = CreateFrame("Button", nil, configFrame)
+        prevTabButton:SetWidth(30)
+        prevTabButton:SetHeight(22)
+        prevTabButton:SetPoint("TOPLEFT", configFrame, "TOPLEFT", 20, -40)
+        prevTabButton:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Up")
+        prevTabButton:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Down")
+        prevTabButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+        prevTabButton:SetScript("OnClick", function()
+            LogFilterGroup:ShowPreviousConfigTab()
+        end)
+        configFrame.prevTabButton = prevTabButton
+
+        -- Current tab display
+        local currentTabDisplay = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        currentTabDisplay:SetPoint("LEFT", prevTabButton, "RIGHT", 10, 0)
+        currentTabDisplay:SetWidth(200)
+        currentTabDisplay:SetJustifyH("CENTER")
+        configFrame.currentTabDisplay = currentTabDisplay
+
+        -- Next Tab button
+        local nextTabButton = CreateFrame("Button", nil, configFrame)
+        nextTabButton:SetWidth(30)
+        nextTabButton:SetHeight(22)
+        nextTabButton:SetPoint("LEFT", currentTabDisplay, "RIGHT", 10, 0)
+        nextTabButton:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Up")
+        nextTabButton:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Down")
+        nextTabButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+        nextTabButton:SetScript("OnClick", function()
+            LogFilterGroup:ShowNextConfigTab()
+        end)
+        configFrame.nextTabButton = nextTabButton
+
+        -- Add New Tab button
+        local addNewTabButton = CreateFrame("Button", nil, configFrame)
+        addNewTabButton:SetWidth(80)
+        addNewTabButton:SetHeight(22)
+        addNewTabButton:SetPoint("LEFT", nextTabButton, "RIGHT", 15, 0)
+        addNewTabButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        addNewTabButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        addNewTabButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        addNewTabButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        addNewTabButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        addNewTabButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        local addNewTabText = addNewTabButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        addNewTabText:SetPoint("CENTER", addNewTabButton, "CENTER", 0, 0)
+        addNewTabText:SetText("Add New Tab")
+
+        addNewTabButton:SetScript("OnClick", function()
+            LogFilterGroup:ShowInputDialog("Enter Tab Name", "New Tab", function(name)
+                if name and name ~= "" then
+                    local newTab = LogFilterGroup:AddTab(name)
+                    -- Switch to the newly created tab in the main UI
+                    LogFilterGroup.activeTabId = newTab.id
+                    -- Update config window to show new tab
+                    LogFilterGroup.configTabIndex = table.getn(LogFilterGroup.tabs)
+                    LogFilterGroup:UpdateConfigureWindow()
+                    -- Refresh main UI to show the new active tab
+                    if LogFilterGroupFrame then
+                        LogFilterGroup:RefreshTabButtons()
+                        LogFilterGroup:UpdateDisplay()
+                    end
+                end
+            end)
+        end)
+        configFrame.addNewTabButton = addNewTabButton
+
+        -- Tab Name label and input (moved down to accommodate navigation)
+        local tabNameLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        tabNameLabel:SetPoint("TOPLEFT", configFrame, "TOPLEFT", 20, -75)
+        tabNameLabel:SetText("Tab Name:")
+
+        local tabNameInput = CreateFrame("EditBox", nil, configFrame)
+        tabNameInput:SetWidth(200)
+        tabNameInput:SetHeight(20)
+        tabNameInput:SetPoint("LEFT", tabNameLabel, "RIGHT", 10, 0)
+        tabNameInput:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        tabNameInput:SetBackdropColor(0, 0, 0, 0.8)
+        tabNameInput:SetFontObject(GameFontNormal)
+        tabNameInput:SetTextInsets(5, 5, 0, 0)
+        tabNameInput:EnableMouse(true)
+        tabNameInput:SetAutoFocus(false)
+        tabNameInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+        tabNameInput:SetScript("OnEnterPressed", function() this:ClearFocus() end)
+
+        configFrame.tabNameInput = tabNameInput
+
+        -- Filter label
+        local filterLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        filterLabel:SetPoint("TOPLEFT", configFrame, "TOPLEFT", 20, -110)
+        filterLabel:SetText("Filter (messages matching this will be shown):")
+
+        -- Filter input - large multi-line box
+        local filterInput = CreateFrame("EditBox", nil, configFrame)
+        filterInput:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -5)
+        filterInput:SetWidth(460)
+        filterInput:SetHeight(100)
+        filterInput:SetMultiLine(true)
+        filterInput:SetMaxLetters(0)
+        filterInput:SetFontObject(GameFontNormal)
+        filterInput:SetTextInsets(8, 8, 8, 8)
+        filterInput:SetAutoFocus(false)
+        filterInput:EnableMouse(true)
+        filterInput:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        filterInput:SetBackdropColor(0, 0, 0, 0.8)
+        filterInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+        filterInput:SetScript("OnEnterPressed", function()
+            -- Allow Enter to add newlines in multi-line edit box
+            local text = this:GetText()
+            local cursorPos = this:GetCursorPosition()
+            local newText = string.sub(text, 1, cursorPos) .. "\n" .. string.sub(text, cursorPos + 1)
+            this:SetText(newText)
+            this:SetCursorPosition(cursorPos + 1)
+        end)
+        filterInput:SetScript("OnTextChanged", function()
+            -- Temporarily update the config tab's filter for preview (without saving)
+            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+            if currentTab then
+                currentTab.filterText = this:GetText()
+                -- Only update display if this is the active tab in main UI
+                if currentTab.id == LogFilterGroup.activeTabId then
+                    LogFilterGroup:UpdateDisplay()
+                end
+            end
+        end)
+
+        configFrame.filterInput = filterInput
+
+        -- Exclude label
+        local excludeLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        excludeLabel:SetPoint("TOPLEFT", filterInput, "BOTTOMLEFT", 0, -10)
+        excludeLabel:SetText("Exclude (messages matching this will be hidden):")
+
+        -- Exclude input - large multi-line box
+        local excludeInput = CreateFrame("EditBox", nil, configFrame)
+        excludeInput:SetPoint("TOPLEFT", excludeLabel, "BOTTOMLEFT", 0, -5)
+        excludeInput:SetWidth(460)
+        excludeInput:SetHeight(100)
+        excludeInput:SetMultiLine(true)
+        excludeInput:SetMaxLetters(0)
+        excludeInput:SetFontObject(GameFontNormal)
+        excludeInput:SetTextInsets(8, 8, 8, 8)
+        excludeInput:SetAutoFocus(false)
+        excludeInput:EnableMouse(true)
+        excludeInput:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        excludeInput:SetBackdropColor(0, 0, 0, 0.8)
+        excludeInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+        excludeInput:SetScript("OnEnterPressed", function()
+            -- Allow Enter to add newlines in multi-line edit box
+            local text = this:GetText()
+            local cursorPos = this:GetCursorPosition()
+            local newText = string.sub(text, 1, cursorPos) .. "\n" .. string.sub(text, cursorPos + 1)
+            this:SetText(newText)
+            this:SetCursorPosition(cursorPos + 1)
+        end)
+        excludeInput:SetScript("OnTextChanged", function()
+            -- Temporarily update the config tab's exclude filter for preview (without saving)
+            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+            if currentTab then
+                currentTab.excludeText = this:GetText()
+                -- Only update display if this is the active tab in main UI
+                if currentTab.id == LogFilterGroup.activeTabId then
+                    LogFilterGroup:UpdateDisplay()
+                end
+            end
+        end)
+
+        configFrame.excludeInput = excludeInput
+
+        -- Whisper Template label and input
+        local whisperLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        whisperLabel:SetPoint("TOPLEFT", excludeInput, "BOTTOMLEFT", 0, -10)
+        whisperLabel:SetText("Whisper Template:")
+
+        local whisperInput = CreateFrame("EditBox", nil, configFrame)
+        whisperInput:SetWidth(200)
+        whisperInput:SetHeight(20)
+        whisperInput:SetPoint("LEFT", whisperLabel, "RIGHT", 10, 0)
+        whisperInput:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        whisperInput:SetBackdropColor(0, 0, 0, 0.8)
+        whisperInput:SetFontObject(GameFontNormal)
+        whisperInput:SetTextInsets(5, 5, 0, 0)
+        whisperInput:EnableMouse(true)
+        whisperInput:SetAutoFocus(false)
+        whisperInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+        whisperInput:SetScript("OnEnterPressed", function() this:ClearFocus() end)
+
+        configFrame.whisperInput = whisperInput
+
+        -- Use Template checkbox
+        local useTemplateCheckbox = CreateFrame("CheckButton", nil, configFrame, "UICheckButtonTemplate")
+        useTemplateCheckbox:SetWidth(20)
+        useTemplateCheckbox:SetHeight(20)
+        useTemplateCheckbox:SetPoint("LEFT", whisperInput, "RIGHT", 10, 0)
+
+        configFrame.useTemplateCheckbox = useTemplateCheckbox
+
+        local useTemplateLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        useTemplateLabel:SetPoint("LEFT", useTemplateCheckbox, "RIGHT", 5, 0)
+        useTemplateLabel:SetText("Use Template")
+
+        -- Action buttons row (Mute, Delete, Rename)
+        local muteButton = CreateFrame("Button", nil, configFrame)
+        muteButton:SetWidth(80)
+        muteButton:SetHeight(22)
+        muteButton:SetPoint("TOPLEFT", whisperLabel, "BOTTOMLEFT", 0, -15)
+        muteButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        muteButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        muteButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        muteButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        muteButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        muteButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        local muteButtonText = muteButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        muteButtonText:SetPoint("CENTER", muteButton, "CENTER", 0, 0)
+        muteButtonText:SetText("Mute Tab")
+
+        muteButton.text = muteButtonText
+
+        muteButton:SetScript("OnClick", function()
+            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+            if currentTab then
+                currentTab.muted = not currentTab.muted
+                muteButtonText:SetText(currentTab.muted and "Unmute Tab" or "Mute Tab")
+                LogFilterGroup:SaveSettings()
+                LogFilterGroup:UpdateTabAppearance()
+            end
+        end)
+
+        configFrame.muteButton = muteButton
+
+        local deleteButton = CreateFrame("Button", nil, configFrame)
+        deleteButton:SetWidth(80)
+        deleteButton:SetHeight(22)
+        deleteButton:SetPoint("LEFT", muteButton, "RIGHT", 10, 0)
+        deleteButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        deleteButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        deleteButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        deleteButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        deleteButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        deleteButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        local deleteButtonText = deleteButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        deleteButtonText:SetPoint("CENTER", deleteButton, "CENTER", 0, 0)
+        deleteButtonText:SetText("Delete Tab")
+
+        deleteButton:SetScript("OnClick", function()
+            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+            if currentTab then
+                LogFilterGroup:ShowConfirmDialog(
+                    "Delete Tab?",
+                    "Are you sure you want to delete '" .. currentTab.name .. "'?",
+                    function()
+                        if LogFilterGroup:DeleteTab(currentTab.id) then
+                            -- Adjust config index if needed
+                            if LogFilterGroup.configTabIndex > table.getn(LogFilterGroup.tabs) then
+                                LogFilterGroup.configTabIndex = table.getn(LogFilterGroup.tabs)
+                            end
+                            -- If we have tabs left, update to show the new current tab
+                            if table.getn(LogFilterGroup.tabs) > 0 then
+                                LogFilterGroup:UpdateConfigureWindow()
+                            else
+                                configFrame:Hide()
+                            end
+                            -- Recreate the main frame to rebuild tabs
+                            if LogFilterGroupFrame then
+                                LogFilterGroupFrame:Hide()
+                                LogFilterGroupFrame = nil
+                            end
+                            LogFilterGroup:ShowFrame()
+                        end
+                    end
+                )
+            end
+        end)
+
+        configFrame.deleteButton = deleteButton
+
+        -- Cancel button
+        local cancelButton = CreateFrame("Button", nil, configFrame)
+        cancelButton:SetWidth(100)
+        cancelButton:SetHeight(22)
+        cancelButton:SetPoint("BOTTOM", configFrame, "BOTTOM", 55, 20)
+        cancelButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        cancelButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        cancelButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        cancelButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        cancelButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        cancelButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        local cancelButtonText = cancelButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        cancelButtonText:SetPoint("CENTER", cancelButton, "CENTER", 0, 0)
+        cancelButtonText:SetText("Cancel")
+
+        cancelButton:SetScript("OnClick", function()
+            -- Restore original values for current config tab
+            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+            if currentTab and configFrame.originalTabName then
+                currentTab.name = configFrame.originalTabName
+                currentTab.filterText = configFrame.originalFilterText
+                currentTab.excludeText = configFrame.originalExcludeText
+                currentTab.whisperTemplate = configFrame.originalWhisperTemplate
+                currentTab.autoSendWhisper = configFrame.originalAutoSendWhisper
+                currentTab.muted = configFrame.originalMuted
+                LogFilterGroup:SaveSettings()
+                LogFilterGroup:UpdateTabAppearance()
+                LogFilterGroup:UpdateDisplay()
+            end
+            configFrame:Hide()
+        end)
+
+        configFrame.cancelButton = cancelButton
+
+        -- Save button
+        local saveButton = CreateFrame("Button", nil, configFrame)
+        saveButton:SetWidth(100)
+        saveButton:SetHeight(22)
+        saveButton:SetPoint("BOTTOM", configFrame, "BOTTOM", -55, 20)
+        saveButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        saveButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        saveButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        saveButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        saveButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        saveButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        local saveButtonText = saveButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        saveButtonText:SetPoint("CENTER", saveButton, "CENTER", 0, 0)
+        saveButtonText:SetText("Save")
+
+        saveButton:SetScript("OnClick", function()
+            -- Save current config tab
+            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+            if currentTab then
+                currentTab.name = configFrame.tabNameInput:GetText()
+                currentTab.filterText = configFrame.filterInput:GetText()
+                currentTab.excludeText = configFrame.excludeInput:GetText()
+                currentTab.whisperTemplate = configFrame.whisperInput:GetText()
+                currentTab.autoSendWhisper = configFrame.useTemplateCheckbox:GetChecked()
+                LogFilterGroup:SaveSettings()
+                -- Refresh main UI tabs to show updated name
+                if LogFilterGroupFrame then
+                    LogFilterGroupFrame:Hide()
+                    LogFilterGroupFrame = nil
+                end
+                LogFilterGroup:ShowFrame()
+                print("LogFilterGroup: Tab configuration saved!")
+            end
+            configFrame:Hide()
+        end)
+
+        configFrame.saveButton = saveButton
+
+        configFrame:Hide()
+    end
+
+    -- Call update function to load current tab data
+    self:UpdateConfigureWindow()
+
+    -- Show the window
+    LogFilterGroupConfigFrame:Show()
+end
+
+-- Update configure window with current tab data
+function LogFilterGroup:UpdateConfigureWindow()
+    if not LogFilterGroupConfigFrame then return end
+
+    local tab = self.tabs[self.configTabIndex]
+    if not tab then return end
+
+    -- Update tab display
+    LogFilterGroupConfigFrame.currentTabDisplay:SetText(string.format("Tab %d of %d: %s", self.configTabIndex, table.getn(self.tabs), tab.name))
+
+    -- Store original values for Cancel button
+    LogFilterGroupConfigFrame.originalTabName = tab.name
+    LogFilterGroupConfigFrame.originalFilterText = tab.filterText or ""
+    LogFilterGroupConfigFrame.originalExcludeText = tab.excludeText or ""
+    LogFilterGroupConfigFrame.originalWhisperTemplate = tab.whisperTemplate or ""
+    LogFilterGroupConfigFrame.originalAutoSendWhisper = tab.autoSendWhisper or false
+    LogFilterGroupConfigFrame.originalMuted = tab.muted or false
+
+    -- Load current values
+    LogFilterGroupConfigFrame.tabNameInput:SetText(tab.name)
+    LogFilterGroupConfigFrame.filterInput:SetText(tab.filterText or "")
+    LogFilterGroupConfigFrame.excludeInput:SetText(tab.excludeText or "")
+    LogFilterGroupConfigFrame.whisperInput:SetText(tab.whisperTemplate or "")
+    LogFilterGroupConfigFrame.useTemplateCheckbox:SetChecked(tab.autoSendWhisper or false)
+
+    -- Update mute button text
+    LogFilterGroupConfigFrame.muteButton.text:SetText(tab.muted and "Unmute Tab" or "Mute Tab")
+
+    -- Enable/disable prev/next buttons
+    LogFilterGroupConfigFrame.prevTabButton:SetAlpha(self.configTabIndex > 1 and 1 or 0.3)
+    LogFilterGroupConfigFrame.nextTabButton:SetAlpha(self.configTabIndex < table.getn(self.tabs) and 1 or 0.3)
+end
+
+-- Navigate to previous tab in configure window
+function LogFilterGroup:ShowPreviousConfigTab()
+    if self.configTabIndex > 1 then
+        self.configTabIndex = self.configTabIndex - 1
+        -- Switch main UI to this tab
+        local tab = self.tabs[self.configTabIndex]
+        if tab then
+            self:ShowTab(tab.id)
+        end
+        self:UpdateConfigureWindow()
+    end
+end
+
+-- Navigate to next tab in configure window
+function LogFilterGroup:ShowNextConfigTab()
+    if self.configTabIndex < table.getn(self.tabs) then
+        self.configTabIndex = self.configTabIndex + 1
+        -- Switch main UI to this tab
+        local tab = self.tabs[self.configTabIndex]
+        if tab then
+            self:ShowTab(tab.id)
+        end
+        self:UpdateConfigureWindow()
     end
 end

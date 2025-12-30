@@ -17,6 +17,7 @@ local defaults = {
     globalLocked = false,
     soundEnabled = true,
     inTinyMode = false,
+    windowVisible = true,  -- Auto-open window on login
     messageRepository = {},
     nextMessageId = 1,
     tabs = {
@@ -104,12 +105,24 @@ function LogFilterGroup:DeleteTab(tabId)
         return false
     end
 
+    -- Prevent deletion of the last tab
+    if table.getn(self.tabs) <= 1 then
+        print("LogFilterGroup: Cannot delete the last remaining tab!")
+        return false
+    end
+
     for i, t in ipairs(self.tabs) do
         if t.id == tabId then
             table.remove(self.tabs, i)
             -- If deleting active tab, switch to first tab
             if self.activeTabId == tabId then
-                self.activeTabId = self.tabs[1].id
+                if self.tabs[1] then
+                    self.activeTabId = self.tabs[1].id
+                else
+                    -- Fallback: create a default tab if somehow we have none
+                    self:AddTab("New Tab")
+                    self.activeTabId = self.tabs[1].id
+                end
             end
             self:SaveSettings()
             return true
@@ -310,6 +323,27 @@ function LogFilterGroup:Initialize()
 
     -- Save the cleared state
     self:SaveData()
+
+    -- Auto-open window if it was visible when last logged out
+    local windowVisible = LogFilterGroupDB.windowVisible
+    if windowVisible == nil then
+        windowVisible = true  -- Default to open on first run
+    end
+
+    if windowVisible then
+        -- Delay showing the frame until after login is fully complete
+        -- This ensures all UI elements are properly initialized
+        local loginFrame = CreateFrame("Frame")
+        loginFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+        loginFrame:SetScript("OnEvent", function()
+            if LogFilterGroup.inTinyMode then
+                LogFilterGroup:ShowTinyFrame()
+            else
+                LogFilterGroup:ShowFrame()
+            end
+            loginFrame:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        end)
+    end
 
     print("LogFilterGroup loaded! Type /lfg to open the interface.")
 end
@@ -733,6 +767,13 @@ SlashCmdList["LOGFILTERGROUP"] = function(msg)
             LogFilterGroup.debugMode = false
             print("LogFilterGroup: Debug mode OFF")
         end
+    elseif msg == "resetui" then
+        -- Force recreate UI frames
+        if LogFilterGroupConfigFrame then
+            LogFilterGroupConfigFrame:Hide()
+            LogFilterGroupConfigFrame = nil
+        end
+        print("LogFilterGroup: UI frames reset. Config window will be recreated on next open.")
     else
         LogFilterGroup:ToggleFrame()
     end

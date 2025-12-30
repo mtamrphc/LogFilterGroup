@@ -80,6 +80,8 @@ function LogFilterGroup:CreateTinyModeFrame()
     closeButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
     closeButton:SetScript("OnClick", function()
         frame:Hide()
+        LogFilterGroupDB.windowVisible = false
+        LogFilterGroup:SaveData()
     end)
     closeButton:SetScript("OnEnter", function()
         GameTooltip:SetOwner(this, "ANCHOR_LEFT")
