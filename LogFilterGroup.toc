@@ -3,7 +3,8 @@
 ## Notes: Organizes LFG/LFM and profession messages from chat
 ## Author: YourName
 ## Version: 1.0
-## SavedVariables: LogFilterGroupDB
+## SavedVariablesPerCharacter: LogFilterGroupDB
+## SavedVariables: LogFilterGroupShared
 
 Core.lua
 Parser.lua

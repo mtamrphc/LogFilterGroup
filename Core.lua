@@ -142,6 +142,11 @@ function LogFilterGroup:Initialize()
         LogFilterGroupDB = {}
     end
 
+    -- Initialize shared character data storage
+    if not LogFilterGroupShared then
+        LogFilterGroupShared = { characters = {} }
+    end
+
     -- Deep copy defaults for any missing fields
     for key, value in pairs(defaults) do
         if LogFilterGroupDB[key] == nil then
@@ -464,6 +469,11 @@ end
 
 -- Save data to saved variables
 function LogFilterGroup:SaveData()
+    -- Don't save if we're in clone preview mode
+    if self.pendingClone then
+        return
+    end
+
     LogFilterGroupDB.tabs = self.tabs
     LogFilterGroupDB.messageRepository = self.messageRepository
     LogFilterGroupDB.nextMessageId = self.nextMessageId
@@ -471,6 +481,11 @@ end
 
 -- Save settings to saved variables
 function LogFilterGroup:SaveSettings()
+    -- Don't save if we're in clone preview mode
+    if self.pendingClone then
+        return
+    end
+
     LogFilterGroupDB.tabs = self.tabs
     LogFilterGroupDB.activeTabId = self.activeTabId
     LogFilterGroupDB.nextTabId = self.nextTabId
@@ -487,6 +502,144 @@ function LogFilterGroup:SaveSettings()
     LogFilterGroupDB.mainFrameSize = self.mainFrameSize
     LogFilterGroupDB.tinyFramePosition = self.tinyFramePosition
     LogFilterGroupDB.tinyFrameSize = self.tinyFrameSize
+
+    -- Auto-export to shared storage for cross-character cloning
+    local characterKey = UnitName("player") .. "-" .. GetRealmName()
+
+    if not LogFilterGroupShared then
+        LogFilterGroupShared = { characters = {} }
+    end
+
+    -- Deep copy tabs (excluding messageRefs since we don't want to clone messages)
+    local tabsCopy = {}
+    for i, tab in ipairs(self.tabs) do
+        tabsCopy[i] = {
+            id = tab.id,
+            name = tab.name,
+            filterText = tab.filterText,
+            excludeText = tab.excludeText,
+            whisperTemplate = tab.whisperTemplate,
+            autoSendWhisper = tab.autoSendWhisper,
+            isDefault = tab.isDefault,
+            locked = tab.locked,
+            muted = tab.muted
+            -- Intentionally exclude messageRefs - we don't clone messages
+        }
+    end
+
+    LogFilterGroupShared.characters[characterKey] = {
+        lastUpdated = time(),
+        tabs = tabsCopy,
+        settings = {
+            globalLocked = self.globalLocked,
+            soundEnabled = self.soundEnabled,
+            syntaxPreviewEnabled = self.syntaxPreviewEnabled,
+            autoCloseParentheses = self.autoCloseParentheses
+        }
+    }
+end
+
+-- Get list of available characters to clone settings from
+function LogFilterGroup:GetAvailableCharacters()
+    if not LogFilterGroupShared or not LogFilterGroupShared.characters then
+        return {}
+    end
+
+    local currentChar = UnitName("player") .. "-" .. GetRealmName()
+    local available = {}
+
+    for charKey, charData in pairs(LogFilterGroupShared.characters) do
+        -- Skip current character
+        if charKey ~= currentChar then
+            -- Check if character has non-default tabs
+            if charData.tabs and table.getn(charData.tabs) > 0 then
+                table.insert(available, {
+                    key = charKey,
+                    lastUpdated = charData.lastUpdated or 0
+                })
+            end
+        end
+    end
+
+    return available
+end
+
+-- Clone settings from another character
+function LogFilterGroup:CloneFromCharacter(characterKey)
+    local charData = LogFilterGroupShared.characters[characterKey]
+    if not charData then
+        print("LogFilterGroup: Character data not found")
+        return
+    end
+
+    -- First, backup current tabs and settings (in case user cancels)
+    if not self.preCloneBackup then
+        -- Deep copy current tabs
+        local backupTabs = {}
+        for i, tab in ipairs(self.tabs) do
+            backupTabs[i] = {}
+            for k, v in pairs(tab) do
+                if type(v) == "table" then
+                    backupTabs[i][k] = {}
+                    for k2, v2 in pairs(v) do
+                        backupTabs[i][k][k2] = v2
+                    end
+                else
+                    backupTabs[i][k] = v
+                end
+            end
+        end
+
+        self.preCloneBackup = {
+            tabs = backupTabs,
+            settings = {
+                globalLocked = self.globalLocked,
+                soundEnabled = self.soundEnabled,
+                syntaxPreviewEnabled = self.syntaxPreviewEnabled,
+                autoCloseParentheses = self.autoCloseParentheses
+            }
+        }
+    end
+
+    -- Deep copy tabs to pending clone data (don't apply yet)
+    local clonedTabs = {}
+    for i, tab in ipairs(charData.tabs) do
+        clonedTabs[i] = {}
+        for k, v in pairs(tab) do
+            if type(v) == "table" then
+                clonedTabs[i][k] = {}
+                for k2, v2 in pairs(v) do
+                    clonedTabs[i][k][k2] = v2
+                end
+            else
+                clonedTabs[i][k] = v
+            end
+        end
+        -- Initialize empty messageRefs for display
+        clonedTabs[i].messageRefs = {}
+    end
+
+    -- Store cloned data in pending state
+    self.pendingClone = {
+        tabs = clonedTabs,
+        settings = {
+            globalLocked = charData.settings.globalLocked or false,
+            soundEnabled = charData.settings.soundEnabled,
+            syntaxPreviewEnabled = charData.settings.syntaxPreviewEnabled,
+            autoCloseParentheses = charData.settings.autoCloseParentheses
+        },
+        sourceCharacter = characterKey
+    }
+
+    -- Apply pending clone settings to config window for preview
+    if LogFilterGroupConfigFrame then
+        -- Temporarily override tabs for config window display
+        self.configPreviewTabs = clonedTabs
+        self.configTabIndex = 1  -- Reset to first tab
+        self:UpdateConfigureWindow()
+    end
+
+    print("LogFilterGroup: Cloned settings from " .. characterKey .. " - Click Save to keep changes")
 end
 
 -- Save main frame position and size
@@ -612,6 +765,7 @@ end
 -- Event frame
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")  -- For auto-export after player data is available
 eventFrame:RegisterEvent("CHAT_MSG_CHANNEL")  -- All numbered channels (General, Trade, World, LocalDefense, etc.)
 eventFrame:RegisterEvent("CHAT_MSG_YELL")
 eventFrame:RegisterEvent("CHAT_MSG_SAY")
@@ -635,6 +789,17 @@ eventFrame:SetScript("OnEvent", function()
                 LogFilterGroup.lastCleanup = currentTime
             end
         end)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        -- Auto-export settings when player data is available
+        -- This ensures UnitName and GetRealmName return valid values
+        if not LogFilterGroup.hasExportedOnLogin then
+            LogFilterGroup:SaveSettings()
+            LogFilterGroup.hasExportedOnLogin = true
+
+            -- Debug output
+            local charKey = UnitName("player") .. "-" .. GetRealmName()
+            print("LogFilterGroup: Exported settings for " .. charKey)
+        end
     elseif event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_YELL" or event == "CHAT_MSG_SAY" or event == "CHAT_MSG_WHISPER" then
         local message = arg1
         local sender = arg2
@@ -747,6 +912,7 @@ eventFrame:SetScript("OnEvent", function()
         end
     elseif event == "PLAYER_LOGOUT" then
         LogFilterGroup:SaveData()
+        LogFilterGroup:SaveSettings()  -- Ensure shared export is saved
     end
 end)
 

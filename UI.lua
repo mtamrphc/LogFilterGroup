@@ -2341,6 +2341,36 @@ function LogFilterGroup:ShowConfigureWindow()
         title:SetText("Configure Tabs")
         configFrame.title = title
 
+        -- Clone Settings button
+        local cloneButton = CreateFrame("Button", nil, configFrame)
+        cloneButton:SetWidth(100)
+        cloneButton:SetHeight(22)
+        cloneButton:SetPoint("TOPRIGHT", configFrame, "TOPRIGHT", -15, -8)
+        cloneButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+        cloneButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+        cloneButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+        cloneButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        cloneButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+        cloneButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+        local cloneButtonText = cloneButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        cloneButtonText:SetPoint("CENTER", cloneButton, "CENTER", 0, 0)
+        cloneButtonText:SetText("Clone Settings")
+
+        cloneButton:SetScript("OnClick", function()
+            local availableChars = LogFilterGroup:GetAvailableCharacters()
+
+            if table.getn(availableChars) == 0 then
+                DEFAULT_CHAT_FRAME:AddMessage("LogFilterGroup: No other characters with settings found")
+                return
+            end
+
+            -- Create dropdown menu
+            LogFilterGroup:ShowCloneMenu(availableChars)
+        end)
+
+        configFrame.cloneButton = cloneButton
+
         -- Tab navigation row
         -- Previous Tab button
         local prevTabButton = CreateFrame("Button", nil, configFrame)
@@ -2748,19 +2778,49 @@ function LogFilterGroup:ShowConfigureWindow()
         cancelButtonText:SetText("Cancel")
 
         cancelButton:SetScript("OnClick", function()
-            -- Restore original values for current config tab
-            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
-            if currentTab and configFrame.originalTabName then
-                currentTab.name = configFrame.originalTabName
-                currentTab.filterText = configFrame.originalFilterText
-                currentTab.excludeText = configFrame.originalExcludeText
-                currentTab.whisperTemplate = configFrame.originalWhisperTemplate
-                currentTab.autoSendWhisper = configFrame.originalAutoSendWhisper
-                currentTab.muted = configFrame.originalMuted
-                LogFilterGroup:SaveSettings()
-                LogFilterGroup:UpdateTabAppearance()
-                LogFilterGroup:UpdateDisplay()
+            -- Check if we're canceling a pending clone
+            if LogFilterGroup.pendingClone and LogFilterGroup.preCloneBackup then
+                -- Restore from backup
+                LogFilterGroup.tabs = LogFilterGroup.preCloneBackup.tabs
+                LogFilterGroup.globalLocked = LogFilterGroup.preCloneBackup.settings.globalLocked
+                LogFilterGroup.soundEnabled = LogFilterGroup.preCloneBackup.settings.soundEnabled
+                LogFilterGroup.syntaxPreviewEnabled = LogFilterGroup.preCloneBackup.settings.syntaxPreviewEnabled
+                LogFilterGroup.autoCloseParentheses = LogFilterGroup.preCloneBackup.settings.autoCloseParentheses
+
+                -- Clear pending clone, preview, and backup
+                LogFilterGroup.pendingClone = nil
+                LogFilterGroup.configPreviewTabs = nil
+                LogFilterGroup.preCloneBackup = nil
+                print("LogFilterGroup: Clone cancelled - original settings restored")
+            elseif LogFilterGroup.pendingClone then
+                -- No backup exists, just clear pending
+                LogFilterGroup.pendingClone = nil
+                LogFilterGroup.configPreviewTabs = nil
+                print("LogFilterGroup: Clone cancelled")
+            else
+                -- Restore original values for current config tab
+                local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+                if currentTab and configFrame.originalTabName then
+                    currentTab.name = configFrame.originalTabName
+                    currentTab.filterText = configFrame.originalFilterText
+                    currentTab.excludeText = configFrame.originalExcludeText
+                    currentTab.whisperTemplate = configFrame.originalWhisperTemplate
+                    currentTab.autoSendWhisper = configFrame.originalAutoSendWhisper
+                    currentTab.muted = configFrame.originalMuted
+                    LogFilterGroup:SaveSettings()
+                    LogFilterGroup:UpdateTabAppearance()
+                    LogFilterGroup:UpdateDisplay()
+                end
             end
+
+            -- Close clone menu if it's open
+            if LogFilterGroupCloneMenu and LogFilterGroupCloneMenu:IsVisible() then
+                LogFilterGroupCloneMenu:Hide()
+            end
+
+            -- Close confirmation dialog if it's open
+            StaticPopup_Hide("LOGFILTERGROUP_CONFIRM_CLONE")
+
             configFrame:Hide()
         end)
 
@@ -2774,7 +2834,11 @@ function LogFilterGroup:ShowConfigureWindow()
         syntaxPreviewCheckbox:SetChecked(LogFilterGroup.syntaxPreviewEnabled)
         syntaxPreviewCheckbox:SetScript("OnClick", function()
             LogFilterGroup.syntaxPreviewEnabled = this:GetChecked()
-            LogFilterGroup:SaveSettings()
+
+            -- Only save if not updating UI programmatically
+            if not LogFilterGroup.isUpdatingConfigUI then
+                LogFilterGroup:SaveSettings()
+            end
 
             -- Toggle overlay visibility
             if LogFilterGroup.syntaxPreviewEnabled then
@@ -2815,30 +2879,63 @@ function LogFilterGroup:ShowConfigureWindow()
         saveButtonText:SetText("Save")
 
         saveButton:SetScript("OnClick", function()
-            -- Save current config tab
-            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
-            if currentTab then
-                currentTab.name = configFrame.tabNameInput:GetText()
-                currentTab.filterText = configFrame.filterInput:GetText()
-                currentTab.excludeText = configFrame.excludeInput:GetText()
-                currentTab.whisperTemplate = configFrame.whisperInput:GetText()
-                currentTab.autoSendWhisper = configFrame.useTemplateCheckbox:GetChecked()
-                LogFilterGroup:SaveSettings()
-                -- Refresh UI based on current mode
-                if LogFilterGroup.inTinyMode then
-                    -- In Tiny Mode, just update the tiny display and tab buttons
-                    LogFilterGroup:UpdateTinyTabButtons()
-                    LogFilterGroup:UpdateTinyDisplay()
-                else
-                    -- In Main UI mode, refresh the main frame
-                    if LogFilterGroupFrame then
-                        LogFilterGroupFrame:Hide()
-                        LogFilterGroupFrame = nil
-                    end
-                    LogFilterGroup:ShowFrame()
+            -- Check if we have a pending clone to apply
+            if LogFilterGroup.pendingClone then
+                -- Apply the cloned tabs and settings
+                LogFilterGroup.tabs = LogFilterGroup.pendingClone.tabs
+                LogFilterGroup.globalLocked = LogFilterGroup.pendingClone.settings.globalLocked
+                LogFilterGroup.soundEnabled = LogFilterGroup.pendingClone.settings.soundEnabled
+                if LogFilterGroup.soundEnabled == nil then
+                    LogFilterGroup.soundEnabled = true
                 end
-                print("LogFilterGroup: Tab configuration saved!")
+                LogFilterGroup.syntaxPreviewEnabled = LogFilterGroup.pendingClone.settings.syntaxPreviewEnabled
+                if LogFilterGroup.syntaxPreviewEnabled == nil then
+                    LogFilterGroup.syntaxPreviewEnabled = true
+                end
+                LogFilterGroup.autoCloseParentheses = LogFilterGroup.pendingClone.settings.autoCloseParentheses
+                if LogFilterGroup.autoCloseParentheses == nil then
+                    LogFilterGroup.autoCloseParentheses = true
+                end
+
+                -- Clear message repository (don't clone messages)
+                LogFilterGroup.messageRepository = {}
+                LogFilterGroup.nextMessageId = 1
+
+                -- Clear pending clone, preview, and backup
+                LogFilterGroup.pendingClone = nil
+                LogFilterGroup.configPreviewTabs = nil
+                LogFilterGroup.preCloneBackup = nil
+
+                LogFilterGroup:SaveSettings()
+                print("LogFilterGroup: Cloned settings applied and saved!")
+            else
+                -- Normal save - update current config tab
+                local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+                if currentTab then
+                    currentTab.name = configFrame.tabNameInput:GetText()
+                    currentTab.filterText = configFrame.filterInput:GetText()
+                    currentTab.excludeText = configFrame.excludeInput:GetText()
+                    currentTab.whisperTemplate = configFrame.whisperInput:GetText()
+                    currentTab.autoSendWhisper = configFrame.useTemplateCheckbox:GetChecked()
+                    print("LogFilterGroup: Tab configuration saved!")
+                end
+                LogFilterGroup:SaveSettings()
             end
+
+            -- Refresh UI based on current mode
+            if LogFilterGroup.inTinyMode then
+                -- In Tiny Mode, just update the tiny display and tab buttons
+                LogFilterGroup:UpdateTinyTabButtons()
+                LogFilterGroup:UpdateTinyDisplay()
+            else
+                -- In Main UI mode, refresh the main frame
+                if LogFilterGroupFrame then
+                    LogFilterGroupFrame:Hide()
+                    LogFilterGroupFrame = nil
+                end
+                LogFilterGroup:ShowFrame()
+            end
+
             configFrame:Hide()
         end)
 
@@ -2858,11 +2955,16 @@ end
 function LogFilterGroup:UpdateConfigureWindow()
     if not LogFilterGroupConfigFrame then return end
 
-    local tab = self.tabs[self.configTabIndex]
+    -- Use preview tabs if available (during clone preview), otherwise use actual tabs
+    local tabsToDisplay = self.configPreviewTabs or self.tabs
+    local tab = tabsToDisplay[self.configTabIndex]
     if not tab then return end
 
+    -- Set flag to prevent auto-save during UI updates
+    LogFilterGroup.isUpdatingConfigUI = true
+
     -- Update tab display
-    LogFilterGroupConfigFrame.currentTabDisplay:SetText(string.format("Tab %d of %d: %s", self.configTabIndex, table.getn(self.tabs), tab.name))
+    LogFilterGroupConfigFrame.currentTabDisplay:SetText(string.format("Tab %d of %d: %s", self.configTabIndex, table.getn(tabsToDisplay), tab.name))
 
     -- Store original values for Cancel button
     LogFilterGroupConfigFrame.originalTabName = tab.name
@@ -2908,17 +3010,23 @@ function LogFilterGroup:UpdateConfigureWindow()
 
     -- Enable/disable prev/next buttons
     LogFilterGroupConfigFrame.prevTabButton:SetAlpha(self.configTabIndex > 1 and 1 or 0.3)
-    LogFilterGroupConfigFrame.nextTabButton:SetAlpha(self.configTabIndex < table.getn(self.tabs) and 1 or 0.3)
+    LogFilterGroupConfigFrame.nextTabButton:SetAlpha(self.configTabIndex < table.getn(tabsToDisplay) and 1 or 0.3)
+
+    -- Clear flag
+    LogFilterGroup.isUpdatingConfigUI = false
 end
 
 -- Navigate to previous tab in configure window
 function LogFilterGroup:ShowPreviousConfigTab()
+    local tabsToUse = self.configPreviewTabs or self.tabs
     if self.configTabIndex > 1 then
         self.configTabIndex = self.configTabIndex - 1
-        -- Switch main UI to this tab
-        local tab = self.tabs[self.configTabIndex]
-        if tab then
-            self:ShowTab(tab.id)
+        -- Only switch main UI if not in clone preview mode
+        if not self.configPreviewTabs then
+            local tab = tabsToUse[self.configTabIndex]
+            if tab then
+                self:ShowTab(tab.id)
+            end
         end
         self:UpdateConfigureWindow()
     end
@@ -2926,13 +3034,184 @@ end
 
 -- Navigate to next tab in configure window
 function LogFilterGroup:ShowNextConfigTab()
-    if self.configTabIndex < table.getn(self.tabs) then
+    local tabsToUse = self.configPreviewTabs or self.tabs
+    if self.configTabIndex < table.getn(tabsToUse) then
         self.configTabIndex = self.configTabIndex + 1
-        -- Switch main UI to this tab
-        local tab = self.tabs[self.configTabIndex]
-        if tab then
-            self:ShowTab(tab.id)
+        -- Only switch main UI if not in clone preview mode
+        if not self.configPreviewTabs then
+            local tab = tabsToUse[self.configTabIndex]
+            if tab then
+                self:ShowTab(tab.id)
+            end
         end
         self:UpdateConfigureWindow()
     end
+end
+
+-- Show clone menu to select character to clone from
+function LogFilterGroup:ShowCloneMenu(availableChars)
+    -- Hide and clear existing menu if it exists
+    if LogFilterGroupCloneMenu then
+        LogFilterGroupCloneMenu:Hide()
+        LogFilterGroupCloneMenu = nil
+    end
+
+    -- Create selection frame
+    local menuFrame = CreateFrame("Frame", "LogFilterGroupCloneMenu", UIParent)
+    menuFrame:SetWidth(350)
+    menuFrame:SetHeight(150)
+    menuFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    menuFrame:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true,
+        tileSize = 32,
+        edgeSize = 32,
+        insets = { left = 11, right = 12, top = 12, bottom = 11 }
+    })
+    menuFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+
+    -- Store selected character
+    menuFrame.selectedChar = availableChars[1].key
+
+    -- Title
+    local title = menuFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOP", menuFrame, "TOP", 0, -15)
+    title:SetText("Clone Settings")
+
+    -- Label
+    local label = menuFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    label:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", 20, -45)
+    label:SetText("Select character:")
+
+    -- Dropdown button (clickable area)
+    local dropdownButton = CreateFrame("Button", nil, menuFrame)
+    dropdownButton:SetWidth(300)
+    dropdownButton:SetHeight(32)
+    dropdownButton:SetPoint("TOP", menuFrame, "TOP", 0, -65)
+    dropdownButton:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 }
+    })
+    dropdownButton:SetBackdropColor(0, 0, 0, 0.5)
+
+    -- Selected text
+    local selectedText = dropdownButton:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    selectedText:SetPoint("LEFT", dropdownButton, "LEFT", 10, 0)
+    selectedText:SetText(menuFrame.selectedChar)
+
+    -- Arrow icon
+    local arrow = dropdownButton:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    arrow:SetPoint("RIGHT", dropdownButton, "RIGHT", -10, 0)
+    arrow:SetText("v")
+
+    -- Dropdown menu functionality
+    dropdownButton:SetScript("OnClick", function()
+        -- Toggle dropdown menu
+        if not menuFrame.dropMenu then
+            local dropMenu = CreateFrame("Frame", nil, menuFrame)
+            dropMenu:SetWidth(300)
+            dropMenu:SetHeight(math.min(table.getn(availableChars) * 20 + 10, 200))
+            dropMenu:SetPoint("TOP", dropdownButton, "BOTTOM", 0, -2)
+            dropMenu:SetBackdrop({
+                bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                tile = true,
+                tileSize = 16,
+                edgeSize = 16,
+                insets = { left = 3, right = 3, top = 3, bottom = 3 }
+            })
+            dropMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+            dropMenu:SetFrameLevel(menuFrame:GetFrameLevel() + 10)  -- Ensure dropdown appears above buttons
+            dropMenu:Hide()
+            menuFrame.dropMenu = dropMenu
+
+            -- Create buttons for each character
+            for i, charInfo in ipairs(availableChars) do
+                local characterKey = charInfo.key  -- Capture the value in loop scope
+                local btn = CreateFrame("Button", nil, dropMenu)
+                btn:SetWidth(290)
+                btn:SetHeight(18)
+                btn:SetPoint("TOP", dropMenu, "TOP", 0, -(i-1) * 20 - 5)
+
+                local btnHighlight = btn:CreateTexture(nil, "HIGHLIGHT")
+                btnHighlight:SetAllPoints()
+                btnHighlight:SetTexture(1, 1, 1, 0.2)
+
+                local btnText = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                btnText:SetPoint("LEFT", btn, "LEFT", 5, 0)
+                btnText:SetText(characterKey)
+
+                btn:SetScript("OnClick", function()
+                    selectedText:SetText(characterKey)
+                    menuFrame.selectedChar = characterKey
+                    dropMenu:Hide()
+                end)
+            end
+        end
+
+        if menuFrame.dropMenu:IsVisible() then
+            menuFrame.dropMenu:Hide()
+        else
+            menuFrame.dropMenu:Show()
+        end
+    end)
+
+    -- OK button
+    local okButton = CreateFrame("Button", nil, menuFrame)
+    okButton:SetWidth(80)
+    okButton:SetHeight(22)
+    okButton:SetPoint("BOTTOM", menuFrame, "BOTTOM", -45, 15)
+    okButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+    okButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+    okButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+    okButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+    okButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+    okButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+    local okButtonText = okButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    okButtonText:SetPoint("CENTER", okButton, "CENTER", 0, 0)
+    okButtonText:SetText("OK")
+
+    okButton:SetScript("OnClick", function()
+        StaticPopupDialogs["LOGFILTERGROUP_CONFIRM_CLONE"] = {
+            text = "Clone settings from " .. menuFrame.selectedChar .. "?\n\nThis will replace your current tabs and settings.",
+            button1 = "Clone",
+            button2 = "Cancel",
+            OnAccept = function()
+                LogFilterGroup:CloneFromCharacter(menuFrame.selectedChar)
+            end,
+            timeout = 0,
+            whileDead = true,
+            hideOnEscape = true
+        }
+        StaticPopup_Show("LOGFILTERGROUP_CONFIRM_CLONE")
+        menuFrame:Hide()
+    end)
+
+    -- Cancel button
+    local cancelButton = CreateFrame("Button", nil, menuFrame)
+    cancelButton:SetWidth(80)
+    cancelButton:SetHeight(22)
+    cancelButton:SetPoint("BOTTOM", menuFrame, "BOTTOM", 45, 15)
+    cancelButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
+    cancelButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
+    cancelButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
+    cancelButton:GetNormalTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+    cancelButton:GetPushedTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+    cancelButton:GetHighlightTexture():SetTexCoord(0, 0.625, 0, 0.6875)
+
+    local cancelButtonText = cancelButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    cancelButtonText:SetPoint("CENTER", cancelButton, "CENTER", 0, 0)
+    cancelButtonText:SetText("Cancel")
+
+    cancelButton:SetScript("OnClick", function()
+        menuFrame:Hide()
+    end)
+
+    menuFrame:Show()
 end
