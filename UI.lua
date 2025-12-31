@@ -430,6 +430,132 @@ local function ProcessQuotes(filterText)
     return result, quoteMappings
 end
 
+-- Helper function to process and colorize individual tokens
+local function ProcessToken(token)
+    if not token or token == "" then
+        return ""
+    end
+
+    local lowerToken = string.lower(token)
+
+    -- Check logical operators (case-insensitive)
+    if lowerToken == "and" or lowerToken == "or" then
+        -- Logical operators in cyan
+        return "|cFF00AAFF" .. token .. "|r"
+    -- Check if token starts with match type operators (case-insensitive)
+    elseif string.sub(lowerToken, 1, 6) == "exact:" or string.sub(lowerToken, 1, 7) == "prefix:" or
+           string.sub(lowerToken, 1, 7) == "suffix:" or string.sub(lowerToken, 1, 9) == "contains:" then
+        -- Extract the operator part and the search term part
+        local operatorEnd = string.find(lowerToken, ":")
+        if operatorEnd then
+            local operator = string.sub(token, 1, operatorEnd)
+            local searchTerm = string.sub(token, operatorEnd + 1)
+            -- Match type operators in cyan (same as AND/OR), search term in white
+            return "|cFF00AAFF" .. operator .. "|r|cFFFFFFFF" .. searchTerm .. "|r"
+        else
+            return "|cFFFFFFFF" .. token .. "|r"
+        end
+    else
+        -- Regular search terms in white
+        return "|cFFFFFFFF" .. token .. "|r"
+    end
+end
+
+-- Helper function to colorize filter syntax for overlay
+-- Returns color-coded string with WoW color codes
+local function ColorizeFilterSyntax(filterText)
+    if not filterText or filterText == "" then
+        return ""  -- Empty string - EditBox cursor will show
+    end
+
+    local result = ""
+    local i = 1
+    local textLen = string.len(filterText)
+    local parenStack = {}
+    local parenColors = {
+        "|cFFFF4444",  -- red
+        "|cFF00FF00",  -- green
+        "|cFFFFAA00",  -- orange
+        "|cFFAA00FF",  -- purple
+        "|cFFFFFF00",  -- yellow
+        "|cFFFF69B4",  -- pink
+        "|cFFFFFFFF"   -- white
+    }
+
+    local inQuote = false
+    local currentToken = ""
+
+    while i <= textLen do
+        local char = string.sub(filterText, i, i)
+
+        if char == '"' then
+            -- Toggle quote mode
+            if inQuote then
+                -- End quote
+                result = result .. currentToken .. char .. "|r"
+                currentToken = ""
+                inQuote = false
+            else
+                -- Start quote
+                if currentToken ~= "" then
+                    result = result .. ProcessToken(currentToken)
+                    currentToken = ""
+                end
+                result = result .. "|cFFFFFF00" .. char  -- Start yellow color
+                inQuote = true
+            end
+        elseif inQuote then
+            currentToken = currentToken .. char
+        elseif char == "(" then
+            -- Process any pending token
+            if currentToken ~= "" then
+                result = result .. ProcessToken(currentToken)
+                currentToken = ""
+            end
+            -- Add colored open paren
+            local colorIndex = (math.mod(table.getn(parenStack), 6)) + 1
+            local color = parenColors[colorIndex]
+            table.insert(parenStack, {char = "(", color = color, index = i})
+            result = result .. color .. char .. "|r"
+        elseif char == ")" then
+            -- Process any pending token
+            if currentToken ~= "" then
+                result = result .. ProcessToken(currentToken)
+                currentToken = ""
+            end
+            -- Match with opening paren
+            if table.getn(parenStack) > 0 then
+                local openParen = table.remove(parenStack)
+                result = result .. openParen.color .. char .. "|r"
+            else
+                -- Unmatched closing paren
+                result = result .. "|cFFFF0000" .. char .. "|r"
+            end
+        elseif char == " " or char == "\n" or char == "\t" then
+            if currentToken ~= "" then
+                result = result .. ProcessToken(currentToken)
+                currentToken = ""
+            end
+            result = result .. char
+        else
+            currentToken = currentToken .. char
+        end
+
+        i = i + 1
+    end
+
+    -- Process final token
+    if currentToken ~= "" then
+        if inQuote then
+            result = result .. currentToken .. "|r"  -- Close unclosed quote
+        else
+            result = result .. ProcessToken(currentToken)
+        end
+    end
+
+    return result
+end
+
 -- Helper function to process match type prefixes and resolve quote placeholders
 -- Returns: {matchType = "exact|prefix|suffix|contains", searchTerm = "..."}
 local function ProcessMatchTypes(term, quoteMappings)
@@ -2155,6 +2281,18 @@ function LogFilterGroup:ShowHelpWindow()
     end
 end
 
+-- Setup auto-close parentheses for an EditBox
+-- Note: WoW 1.12 EditBox doesn't support GetCursorPosition/SetCursorPosition
+-- So we can't insert the ) at cursor position - this feature is disabled for now
+local function SetupParenthesesAutoClose(editBox)
+    if not editBox then
+        return
+    end
+
+    -- Auto-close is not functional in WoW 1.12 due to API limitations
+    -- Keeping the function for potential future use or different WoW versions
+end
+
 -- Show configuration window for current tab
 function LogFilterGroup:ShowConfigureWindow()
     -- Initialize config tab index to match the active tab
@@ -2179,8 +2317,8 @@ function LogFilterGroup:ShowConfigureWindow()
     if not LogFilterGroupConfigFrame then
         LogFilterGroupConfigFrame = CreateFrame("Frame", "LogFilterGroupConfigFrame", UIParent)
         local configFrame = LogFilterGroupConfigFrame
-        configFrame:SetWidth(500)
-        configFrame:SetHeight(550)
+        configFrame:SetWidth(520)  -- Reduced width since preview is overlaid
+        configFrame:SetHeight(600)
         configFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
         configFrame:SetBackdrop({
             bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -2314,7 +2452,7 @@ function LogFilterGroup:ShowConfigureWindow()
         -- Filter input - large multi-line box
         local filterInput = CreateFrame("EditBox", nil, configFrame)
         filterInput:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", 0, -5)
-        filterInput:SetWidth(460)
+        filterInput:SetWidth(460)  -- Full width since no separate preview pane
         filterInput:SetHeight(100)
         filterInput:SetMultiLine(true)
         filterInput:SetMaxLetters(0)
@@ -2331,14 +2469,21 @@ function LogFilterGroup:ShowConfigureWindow()
             insets = { left = 4, right = 4, top = 4, bottom = 4 }
         })
         filterInput:SetBackdropColor(0, 0, 0, 0.8)
+
+        -- Make the EditBox text blend with background when syntax preview is enabled
+        if LogFilterGroup.syntaxPreviewEnabled then
+            -- White text - cursor will be bright and visible
+            filterInput:SetTextColor(1, 1, 1, 1)
+        else
+            filterInput:SetTextColor(1, 1, 1, 1)  -- White (normal)
+        end
+
         filterInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
         filterInput:SetScript("OnEnterPressed", function()
             -- Allow Enter to add newlines in multi-line edit box
+            -- Note: WoW 1.12 doesn't support cursor position, so just append newline
             local text = this:GetText()
-            local cursorPos = this:GetCursorPosition()
-            local newText = string.sub(text, 1, cursorPos) .. "\n" .. string.sub(text, cursorPos + 1)
-            this:SetText(newText)
-            this:SetCursorPosition(cursorPos + 1)
+            this:SetText(text .. "\n")
         end)
         filterInput:SetScript("OnTextChanged", function()
             -- Temporarily update the config tab's filter for preview (without saving)
@@ -2350,9 +2495,36 @@ function LogFilterGroup:ShowConfigureWindow()
                     LogFilterGroup:UpdateDisplay()
                 end
             end
+
+            -- Update syntax preview overlay
+            if configFrame.filterPreviewText and LogFilterGroup.syntaxPreviewEnabled then
+                configFrame.filterPreviewText:SetText(ColorizeFilterSyntax(this:GetText()))
+            end
         end)
 
+        -- Setup auto-close parentheses
+        SetupParenthesesAutoClose(filterInput)
+
         configFrame.filterInput = filterInput
+
+        -- Syntax preview overlay - positioned directly over the EditBox
+        local filterPreviewFrame = CreateFrame("Frame", nil, configFrame)
+        filterPreviewFrame:SetPoint("TOPLEFT", filterInput, "TOPLEFT", 0, 0)
+        filterPreviewFrame:SetWidth(460)
+        filterPreviewFrame:SetHeight(100)
+        filterPreviewFrame:EnableMouse(false)  -- Click-through to EditBox below
+        filterPreviewFrame:SetFrameLevel(filterInput:GetFrameLevel() + 1)  -- Above EditBox
+
+        -- FontString for colored text overlay
+        local filterPreviewText = filterPreviewFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        filterPreviewText:SetPoint("TOPLEFT", filterPreviewFrame, "TOPLEFT", 8, -8)
+        filterPreviewText:SetWidth(444)
+        filterPreviewText:SetJustifyH("LEFT")
+        filterPreviewText:SetJustifyV("TOP")
+        filterPreviewText:SetText("|cFF666666(empty filter)|r")
+
+        configFrame.filterPreviewFrame = filterPreviewFrame
+        configFrame.filterPreviewText = filterPreviewText
 
         -- Exclude label
         local excludeLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -2362,7 +2534,7 @@ function LogFilterGroup:ShowConfigureWindow()
         -- Exclude input - large multi-line box
         local excludeInput = CreateFrame("EditBox", nil, configFrame)
         excludeInput:SetPoint("TOPLEFT", excludeLabel, "BOTTOMLEFT", 0, -5)
-        excludeInput:SetWidth(460)
+        excludeInput:SetWidth(460)  -- Full width since no separate preview pane
         excludeInput:SetHeight(100)
         excludeInput:SetMultiLine(true)
         excludeInput:SetMaxLetters(0)
@@ -2379,14 +2551,21 @@ function LogFilterGroup:ShowConfigureWindow()
             insets = { left = 4, right = 4, top = 4, bottom = 4 }
         })
         excludeInput:SetBackdropColor(0, 0, 0, 0.8)
+
+        -- Make the EditBox text blend with background when syntax preview is enabled
+        if LogFilterGroup.syntaxPreviewEnabled then
+            -- White text - cursor will be bright and visible
+            excludeInput:SetTextColor(1, 1, 1, 1)
+        else
+            excludeInput:SetTextColor(1, 1, 1, 1)  -- White (normal)
+        end
+
         excludeInput:SetScript("OnEscapePressed", function() this:ClearFocus() end)
         excludeInput:SetScript("OnEnterPressed", function()
             -- Allow Enter to add newlines in multi-line edit box
+            -- Note: WoW 1.12 doesn't support cursor position, so just append newline
             local text = this:GetText()
-            local cursorPos = this:GetCursorPosition()
-            local newText = string.sub(text, 1, cursorPos) .. "\n" .. string.sub(text, cursorPos + 1)
-            this:SetText(newText)
-            this:SetCursorPosition(cursorPos + 1)
+            this:SetText(text .. "\n")
         end)
         excludeInput:SetScript("OnTextChanged", function()
             -- Temporarily update the config tab's exclude filter for preview (without saving)
@@ -2398,9 +2577,36 @@ function LogFilterGroup:ShowConfigureWindow()
                     LogFilterGroup:UpdateDisplay()
                 end
             end
+
+            -- Update syntax preview overlay
+            if configFrame.excludePreviewText and LogFilterGroup.syntaxPreviewEnabled then
+                configFrame.excludePreviewText:SetText(ColorizeFilterSyntax(this:GetText()))
+            end
         end)
 
+        -- Setup auto-close parentheses
+        SetupParenthesesAutoClose(excludeInput)
+
         configFrame.excludeInput = excludeInput
+
+        -- Syntax preview overlay - positioned directly over the EditBox
+        local excludePreviewFrame = CreateFrame("Frame", nil, configFrame)
+        excludePreviewFrame:SetPoint("TOPLEFT", excludeInput, "TOPLEFT", 0, 0)
+        excludePreviewFrame:SetWidth(460)
+        excludePreviewFrame:SetHeight(100)
+        excludePreviewFrame:EnableMouse(false)  -- Click-through to EditBox below
+        excludePreviewFrame:SetFrameLevel(excludeInput:GetFrameLevel() + 1)  -- Above EditBox
+
+        -- FontString for colored text overlay
+        local excludePreviewText = excludePreviewFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        excludePreviewText:SetPoint("TOPLEFT", excludePreviewFrame, "TOPLEFT", 8, -8)
+        excludePreviewText:SetWidth(444)
+        excludePreviewText:SetJustifyH("LEFT")
+        excludePreviewText:SetJustifyV("TOP")
+        excludePreviewText:SetText("|cFF666666(empty filter)|r")
+
+        configFrame.excludePreviewFrame = excludePreviewFrame
+        configFrame.excludePreviewText = excludePreviewText
 
         -- Whisper Template label and input
         local whisperLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -2560,6 +2766,38 @@ function LogFilterGroup:ShowConfigureWindow()
 
         configFrame.cancelButton = cancelButton
 
+        -- Syntax Preview Enable checkbox
+        local syntaxPreviewCheckbox = CreateFrame("CheckButton", nil, configFrame, "UICheckButtonTemplate")
+        syntaxPreviewCheckbox:SetWidth(20)
+        syntaxPreviewCheckbox:SetHeight(20)
+        syntaxPreviewCheckbox:SetPoint("BOTTOM", configFrame, "BOTTOM", -120, 50)
+        syntaxPreviewCheckbox:SetChecked(LogFilterGroup.syntaxPreviewEnabled)
+        syntaxPreviewCheckbox:SetScript("OnClick", function()
+            LogFilterGroup.syntaxPreviewEnabled = this:GetChecked()
+            LogFilterGroup:SaveSettings()
+
+            -- Toggle overlay visibility
+            if LogFilterGroup.syntaxPreviewEnabled then
+                -- Show colored overlay
+                configFrame.filterPreviewFrame:Show()
+                configFrame.excludePreviewFrame:Show()
+                configFrame.filterInput:SetTextColor(1, 1, 1, 1)  -- White (cursor visible)
+                configFrame.excludeInput:SetTextColor(1, 1, 1, 1)  -- White (cursor visible)
+            else
+                -- Hide overlay, show EditBox text in white
+                configFrame.filterPreviewFrame:Hide()
+                configFrame.excludePreviewFrame:Hide()
+                configFrame.filterInput:SetTextColor(1, 1, 1, 1)  -- White
+                configFrame.excludeInput:SetTextColor(1, 1, 1, 1)  -- White
+            end
+        end)
+
+        local syntaxPreviewLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        syntaxPreviewLabel:SetPoint("LEFT", syntaxPreviewCheckbox, "RIGHT", 5, 0)
+        syntaxPreviewLabel:SetText("Enable Syntax Preview")
+
+        configFrame.syntaxPreviewCheckbox = syntaxPreviewCheckbox
+
         -- Save button
         local saveButton = CreateFrame("Button", nil, configFrame)
         saveButton:SetWidth(100)
@@ -2640,6 +2878,30 @@ function LogFilterGroup:UpdateConfigureWindow()
     LogFilterGroupConfigFrame.excludeInput:SetText(tab.excludeText or "")
     LogFilterGroupConfigFrame.whisperInput:SetText(tab.whisperTemplate or "")
     LogFilterGroupConfigFrame.useTemplateCheckbox:SetChecked(tab.autoSendWhisper or false)
+
+    -- Update preview panes with current filter text
+    if LogFilterGroupConfigFrame.filterPreviewText then
+        LogFilterGroupConfigFrame.filterPreviewText:SetText(ColorizeFilterSyntax(tab.filterText or ""))
+    end
+    if LogFilterGroupConfigFrame.excludePreviewText then
+        LogFilterGroupConfigFrame.excludePreviewText:SetText(ColorizeFilterSyntax(tab.excludeText or ""))
+    end
+
+    -- Show/hide preview panes based on setting
+    if LogFilterGroupConfigFrame.filterPreviewFrame then
+        if LogFilterGroup.syntaxPreviewEnabled then
+            LogFilterGroupConfigFrame.filterPreviewFrame:Show()
+            LogFilterGroupConfigFrame.excludePreviewFrame:Show()
+        else
+            LogFilterGroupConfigFrame.filterPreviewFrame:Hide()
+            LogFilterGroupConfigFrame.excludePreviewFrame:Hide()
+        end
+    end
+
+    -- Update checkbox state
+    if LogFilterGroupConfigFrame.syntaxPreviewCheckbox then
+        LogFilterGroupConfigFrame.syntaxPreviewCheckbox:SetChecked(LogFilterGroup.syntaxPreviewEnabled)
+    end
 
     -- Update mute button text
     LogFilterGroupConfigFrame.muteButton.text:SetText(tab.muted and "Unmute Tab" or "Mute Tab")

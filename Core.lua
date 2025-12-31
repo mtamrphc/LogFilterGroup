@@ -11,6 +11,8 @@ LogFilterGroup.globalLocked = false  -- Global lock state for all filter inputs
 LogFilterGroup.soundEnabled = true  -- Global sound notification toggle
 LogFilterGroup.messageRepository = {}  -- Centralized message storage (eliminates duplication)
 LogFilterGroup.nextMessageId = 1  -- Auto-incrementing ID for messages
+LogFilterGroup.syntaxPreviewEnabled = true  -- Show syntax preview pane in config window
+LogFilterGroup.autoCloseParentheses = true  -- Auto-close parentheses in filter inputs
 
 -- Database defaults
 local defaults = {
@@ -18,6 +20,8 @@ local defaults = {
     soundEnabled = true,
     inTinyMode = false,
     windowVisible = true,  -- Auto-open window on login
+    syntaxPreviewEnabled = true,  -- Show syntax preview pane
+    autoCloseParentheses = true,  -- Auto-close parentheses
     messageRepository = {},
     nextMessageId = 1,
     tabs = {
@@ -263,6 +267,14 @@ function LogFilterGroup:Initialize()
         self.soundEnabled = true
     end
     self.inTinyMode = LogFilterGroupDB.inTinyMode or false
+    self.syntaxPreviewEnabled = LogFilterGroupDB.syntaxPreviewEnabled
+    if self.syntaxPreviewEnabled == nil then
+        self.syntaxPreviewEnabled = true
+    end
+    self.autoCloseParentheses = LogFilterGroupDB.autoCloseParentheses
+    if self.autoCloseParentheses == nil then
+        self.autoCloseParentheses = true
+    end
     self.messageRepository = LogFilterGroupDB.messageRepository or {}
     self.nextMessageId = LogFilterGroupDB.nextMessageId or 1
 
@@ -465,6 +477,8 @@ function LogFilterGroup:SaveSettings()
     LogFilterGroupDB.globalLocked = self.globalLocked
     LogFilterGroupDB.soundEnabled = self.soundEnabled
     LogFilterGroupDB.inTinyMode = self.inTinyMode
+    LogFilterGroupDB.syntaxPreviewEnabled = self.syntaxPreviewEnabled
+    LogFilterGroupDB.autoCloseParentheses = self.autoCloseParentheses
     LogFilterGroupDB.messageRepository = self.messageRepository
     LogFilterGroupDB.nextMessageId = self.nextMessageId
 
