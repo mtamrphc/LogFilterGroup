@@ -652,7 +652,11 @@ function LogFilterGroup:ExitTinyMode()
         LogFilterGroupTinyFrame:Hide()
     end
 
-    -- Show main window
+    -- Show main window (create if needed)
+    if not LogFilterGroupFrame then
+        self:CreateFrame()
+    end
+
     if LogFilterGroupFrame then
         LogFilterGroupFrame:Show()
         self:UpdateDisplay()

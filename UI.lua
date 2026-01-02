@@ -2116,6 +2116,7 @@ function LogFilterGroup:ToggleFrame()
                 self:EnterTinyMode()
             else
                 LogFilterGroupTinyFrame:Show()
+                self:UpdateTinyTabButtons()
                 self:UpdateTinyDisplay()
             end
             LogFilterGroupDB.windowVisible = true

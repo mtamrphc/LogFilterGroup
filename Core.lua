@@ -501,7 +501,8 @@ function LogFilterGroup:AddMessage(tabId, sender, message)
     end
 
     -- Check if message passes filters and flash tab if needed
-    if LogFilterGroupFrame then
+    -- Call this if either frame exists (main or tiny)
+    if LogFilterGroupFrame or LogFilterGroupTinyFrame then
         self:CheckAndFlashTab(tabId, sender, message)
     end
 
