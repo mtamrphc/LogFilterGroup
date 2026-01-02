@@ -422,33 +422,26 @@ function LogFilterGroup:CreateTinyModeFrame()
         clearText:SetText("X")
         clearText:SetTextColor(1, 0.5, 0.5, 1)  -- Light red
         clearBtn:SetScript("OnClick", function()
-            local senderName = this:GetParent().senderName
-            if senderName then
+            local messageId = this:GetParent().messageId
+            if messageId then
                 local currentTab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
                 if currentTab and currentTab.messageRefs then
-                    -- Find and remove the message from this sender
-                    for messageId, metadata in pairs(currentTab.messageRefs) do
-                        local msgData = LogFilterGroup.messageRepository[messageId]
-                        if msgData and msgData.sender == senderName then
-                            -- Remove from this tab's references
-                            currentTab.messageRefs[messageId] = nil
+                    -- Remove from this tab's references
+                    currentTab.messageRefs[messageId] = nil
 
-                            -- Remove this tab from the message's tab list
-                            if msgData.tabs then
-                                msgData.tabs[currentTab.id] = nil
+                    -- Remove this tab from the message's tab list
+                    local msgData = LogFilterGroup.messageRepository[messageId]
+                    if msgData and msgData.tabs then
+                        msgData.tabs[currentTab.id] = nil
 
-                                -- If no other tabs reference this message, delete from repository
-                                local hasOtherTabs = false
-                                for _ in pairs(msgData.tabs) do
-                                    hasOtherTabs = true
-                                    break
-                                end
-                                if not hasOtherTabs then
-                                    LogFilterGroup.messageRepository[messageId] = nil
-                                end
-                            end
-
+                        -- If no other tabs reference this message, delete from repository
+                        local hasOtherTabs = false
+                        for _ in pairs(msgData.tabs) do
+                            hasOtherTabs = true
                             break
+                        end
+                        if not hasOtherTabs then
+                            LogFilterGroup.messageRepository[messageId] = nil
                         end
                     end
 
@@ -493,6 +486,7 @@ function LogFilterGroup:UpdateTinyDisplay()
                 if LogFilterGroup.MatchesFilter(msgData.message, filterText) and
                    not LogFilterGroup.MatchesExclude(msgData.message, msgData.sender, excludeText) then
                     table.insert(messages, {
+                        messageId = messageId,
                         sender = msgData.sender,
                         message = msgData.message,
                         timestamp = msgData.timestamp,
@@ -533,6 +527,7 @@ function LogFilterGroup:UpdateTinyDisplay()
 
         if i <= visibleRowCount and index <= numMessages then
             local data = messages[index]
+            row.messageId = data.messageId
             row.senderName = data.sender
             row.fullMessage = data.message
 
@@ -722,7 +717,7 @@ function LogFilterGroup:SwitchTinyTab(tabId)
     self:UpdateTinyDisplay()
 end
 
--- Update tab buttons to show non-muted tabs
+-- Update tab buttons to show tabs marked for Tiny UI
 function LogFilterGroup:UpdateTinyTabButtons()
     local frame = LogFilterGroupTinyFrame
     if not frame then return end
@@ -732,10 +727,10 @@ function LogFilterGroup:UpdateTinyTabButtons()
         btn:Hide()
     end
 
-    -- Collect non-muted tabs
+    -- Collect tabs that should be shown in Tiny UI
     local visibleTabs = {}
     for _, tab in ipairs(self.tabs) do
-        if not tab.muted then
+        if tab.showInTinyMode ~= false then
             table.insert(visibleTabs, tab)
         end
     end

@@ -1734,8 +1734,12 @@ function LogFilterGroup:CheckAndFlashTab(tabId, sender, message)
 
     -- Apply same filter logic as UpdateDisplay
     if LogFilterGroup.MatchesFilter(message, filterText) and not LogFilterGroup.MatchesExclude(message, sender, excludeText) then
+        -- Determine if tab should be muted for notifications
+        -- Tab is muted if: explicitly muted OR (in Tiny Mode AND showInTinyMode is false)
+        local shouldMute = tab.muted or (self.inTinyMode and not tab.showInTinyMode)
+
         -- Flash tab and play sound only if tab is not muted
-        if not tab.muted then
+        if not shouldMute then
             -- Flash the tab (only for inactive tabs)
             if tabId ~= self.activeTabId then
                 self:FlashTab(tabId)
@@ -1937,6 +1941,7 @@ function LogFilterGroup:UpdateDisplay()
                 -- Apply include filter and exclude filter (exclude checks both message and sender name)
                 if LogFilterGroup.MatchesFilter(msgData.message, filterText) and not LogFilterGroup.MatchesExclude(msgData.message, msgData.sender, excludeText) then
                     table.insert(messages, {
+                        messageId = messageId,
                         sender = msgData.sender,
                         message = msgData.message,
                         timestamp = msgData.timestamp,
@@ -2014,7 +2019,8 @@ function LogFilterGroup:UpdateDisplay()
                 row.inviteButtonText:SetText("Invite")
             end
 
-            -- Store sender data and full message on row for tooltip
+            -- Store sender data, full message, and messageId on row
+            row.messageId = data.messageId
             row.senderName = data.sender
             row.fullMessage = data.message
             row.isTruncated = isTruncated
@@ -2040,33 +2046,26 @@ function LogFilterGroup:UpdateDisplay()
 
             -- Configure clear button behavior
             row.clearButton:SetScript("OnClick", function()
-                local senderName = this:GetParent().senderName
-                if senderName then
+                local messageId = this:GetParent().messageId
+                if messageId then
                     local currentTab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
                     if currentTab and currentTab.messageRefs then
-                        -- Find and remove the message from this sender
-                        for messageId, metadata in pairs(currentTab.messageRefs) do
-                            local msgData = LogFilterGroup.messageRepository[messageId]
-                            if msgData and msgData.sender == senderName then
-                                -- Remove from this tab's references
-                                currentTab.messageRefs[messageId] = nil
+                        -- Remove from this tab's references
+                        currentTab.messageRefs[messageId] = nil
 
-                                -- Remove this tab from the message's tab list
-                                if msgData.tabs then
-                                    msgData.tabs[currentTab.id] = nil
+                        -- Remove this tab from the message's tab list
+                        local msgData = LogFilterGroup.messageRepository[messageId]
+                        if msgData and msgData.tabs then
+                            msgData.tabs[currentTab.id] = nil
 
-                                    -- If no other tabs reference this message, delete from repository
-                                    local hasOtherTabs = false
-                                    for _ in pairs(msgData.tabs) do
-                                        hasOtherTabs = true
-                                        break
-                                    end
-                                    if not hasOtherTabs then
-                                        LogFilterGroup.messageRepository[messageId] = nil
-                                    end
-                                end
-
+                            -- If no other tabs reference this message, delete from repository
+                            local hasOtherTabs = false
+                            for _ in pairs(msgData.tabs) do
+                                hasOtherTabs = true
                                 break
+                            end
+                            if not hasOtherTabs then
+                                LogFilterGroup.messageRepository[messageId] = nil
                             end
                         end
 
@@ -2677,11 +2676,31 @@ function LogFilterGroup:ShowConfigureWindow()
         useTemplateLabel:SetPoint("LEFT", useTemplateCheckbox, "RIGHT", 5, 0)
         useTemplateLabel:SetText("Use Template")
 
+        -- Show in Tiny UI checkbox
+        local showInTinyCheckbox = CreateFrame("CheckButton", nil, configFrame, "UICheckButtonTemplate")
+        showInTinyCheckbox:SetWidth(20)
+        showInTinyCheckbox:SetHeight(20)
+        showInTinyCheckbox:SetPoint("TOPLEFT", whisperLabel, "BOTTOMLEFT", 0, -5)
+        showInTinyCheckbox:SetScript("OnClick", function()
+            local currentTab = LogFilterGroup.tabs[LogFilterGroup.configTabIndex]
+            if currentTab then
+                currentTab.showInTinyMode = this:GetChecked() == 1
+                LogFilterGroup:SaveSettings()
+                LogFilterGroup:UpdateTinyTabButtons()  -- Refresh Tiny UI tabs
+            end
+        end)
+
+        configFrame.showInTinyCheckbox = showInTinyCheckbox
+
+        local showInTinyLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        showInTinyLabel:SetPoint("LEFT", showInTinyCheckbox, "RIGHT", 5, 0)
+        showInTinyLabel:SetText("Show in Tiny UI (When this is disabled, this tab will be muted in Tiny UI mode)")
+
         -- Action buttons row (Mute, Delete, Rename)
         local muteButton = CreateFrame("Button", nil, configFrame)
         muteButton:SetWidth(80)
         muteButton:SetHeight(22)
-        muteButton:SetPoint("TOPLEFT", whisperLabel, "BOTTOMLEFT", 0, -15)
+        muteButton:SetPoint("TOPLEFT", showInTinyCheckbox, "BOTTOMLEFT", 0, -10)
         muteButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-Button-Up")
         muteButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-Button-Down")
         muteButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-Button-Highlight")
@@ -2980,6 +2999,7 @@ function LogFilterGroup:UpdateConfigureWindow()
     LogFilterGroupConfigFrame.excludeInput:SetText(tab.excludeText or "")
     LogFilterGroupConfigFrame.whisperInput:SetText(tab.whisperTemplate or "")
     LogFilterGroupConfigFrame.useTemplateCheckbox:SetChecked(tab.autoSendWhisper or false)
+    LogFilterGroupConfigFrame.showInTinyCheckbox:SetChecked(tab.showInTinyMode ~= false)
 
     -- Update preview panes with current filter text
     if LogFilterGroupConfigFrame.filterPreviewText then

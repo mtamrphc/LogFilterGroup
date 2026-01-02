@@ -14,6 +14,41 @@ LogFilterGroup.nextMessageId = 1  -- Auto-incrementing ID for messages
 LogFilterGroup.syntaxPreviewEnabled = true  -- Show syntax preview pane in config window
 LogFilterGroup.autoCloseParentheses = true  -- Auto-close parentheses in filter inputs
 
+-- Utility function to strip titles and PVP ranks from player names
+-- WoW 1.12 formats: "Private PlayerName", "Corporal PlayerName", "PlayerName the Explorer", etc.
+local function StripPlayerTitle(fullName)
+    if not fullName then
+        return fullName
+    end
+
+    -- PVP ranks appear as prefixes: "Private Name", "Corporal Name", "Sergeant Name", etc.
+    local pvpRanks = {
+        "Private ", "Corporal ", "Sergeant ", "Master Sergeant ", "Sergeant Major ",
+        "Knight ", "Knight%-Lieutenant ", "Knight%-Captain ", "Knight%-Champion ",
+        "Lieutenant Commander ", "Commander ", "Marshal ", "Field Marshal ", "Grand Marshal ",
+        "Scout ", "Grunt ", "Sergeant ", "Senior Sergeant ", "First Sergeant ",
+        "Stone Guard ", "Blood Guard ", "Legionnaire ", "Centurion ", "Champion ",
+        "Lieutenant General ", "General ", "Warlord ", "High Warlord "
+    }
+
+    local name = fullName
+
+    -- Strip PVP rank prefix
+    for _, rank in ipairs(pvpRanks) do
+        if string.find(name, "^" .. rank) then
+            name = string.gsub(name, "^" .. rank, "")
+            break
+        end
+    end
+
+    -- Strip title suffix (e.g., "the Explorer", "of Orgrimmar")
+    -- Titles usually start with " the " or " of "
+    name = string.gsub(name, " the .+$", "")
+    name = string.gsub(name, " of .+$", "")
+
+    return name
+end
+
 -- Database defaults
 local defaults = {
     globalLocked = false,
@@ -35,7 +70,8 @@ local defaults = {
             autoSendWhisper = false,
             isDefault = false,  -- Changed to false so it behaves like a custom tab
             locked = false,
-            muted = false
+            muted = false,
+            showInTinyMode = true  -- Show in Tiny UI by default
         },
         {
             id = "lfg",
@@ -47,7 +83,8 @@ local defaults = {
             autoSendWhisper = false,
             isDefault = false,  -- Changed to false so it behaves like a custom tab
             locked = false,
-            muted = false
+            muted = false,
+            showInTinyMode = true  -- Show in Tiny UI by default
         },
         {
             id = "profession",
@@ -59,7 +96,8 @@ local defaults = {
             autoSendWhisper = false,
             isDefault = false,  -- Changed to false so it behaves like a custom tab
             locked = false,
-            muted = false
+            muted = false,
+            showInTinyMode = true  -- Show in Tiny UI by default
         }
     },
     activeTabId = "lfm",
@@ -94,7 +132,8 @@ function LogFilterGroup:AddTab(name)
         autoSendWhisper = false,
         isDefault = false,
         locked = false,
-        muted = false
+        muted = false,
+        showInTinyMode = true  -- Show in Tiny UI by default
     }
     table.insert(self.tabs, newTab)
     self.nextTabId = self.nextTabId + 1
@@ -283,6 +322,13 @@ function LogFilterGroup:Initialize()
     self.messageRepository = LogFilterGroupDB.messageRepository or {}
     self.nextMessageId = LogFilterGroupDB.nextMessageId or 1
 
+    -- Ensure all tabs have showInTinyMode field (migration for existing data)
+    for _, tab in ipairs(self.tabs) do
+        if tab.showInTinyMode == nil then
+            tab.showInTinyMode = true  -- Default to showing in Tiny UI
+        end
+    end
+
     -- Load window positions
     self.mainFramePosition = LogFilterGroupDB.mainFramePosition
     self.mainFrameSize = LogFilterGroupDB.mainFrameSize
@@ -427,6 +473,9 @@ function LogFilterGroup:AddMessage(tabId, sender, message)
             timestamp = time(),
             tabs = {}  -- Track which tabs this message belongs to
         }
+    else
+        -- Update timestamp for existing message (duplicate message sent again)
+        self.messageRepository[messageId].timestamp = time()
     end
 
     -- Add this tab to the message's tab list
@@ -497,6 +546,15 @@ function LogFilterGroup:SaveSettings()
     LogFilterGroupDB.messageRepository = self.messageRepository
     LogFilterGroupDB.nextMessageId = self.nextMessageId
 
+    -- Save window visibility state based on current frame visibility
+    if LogFilterGroupTinyFrame and LogFilterGroupTinyFrame:IsShown() then
+        LogFilterGroupDB.windowVisible = true
+    elseif LogFilterGroupFrame and LogFilterGroupFrame:IsShown() then
+        LogFilterGroupDB.windowVisible = true
+    else
+        LogFilterGroupDB.windowVisible = false
+    end
+
     -- Save window positions
     LogFilterGroupDB.mainFramePosition = self.mainFramePosition
     LogFilterGroupDB.mainFrameSize = self.mainFrameSize
@@ -522,7 +580,8 @@ function LogFilterGroup:SaveSettings()
             autoSendWhisper = tab.autoSendWhisper,
             isDefault = tab.isDefault,
             locked = tab.locked,
-            muted = tab.muted
+            muted = tab.muted,
+            showInTinyMode = tab.showInTinyMode
             -- Intentionally exclude messageRefs - we don't clone messages
         }
     end
@@ -809,6 +868,9 @@ eventFrame:SetScript("OnEvent", function()
             sender = string.gsub(sender, "%-.*", "")
         end
 
+        -- Strip titles and PVP ranks from sender name
+        sender = StripPlayerTitle(sender)
+
         if message and sender then
             -- Skip addon communication messages using heuristic detection
             -- Addon messages typically: start with Identifier:data or Identifier.data,
@@ -947,6 +1009,18 @@ SlashCmdList["LOGFILTERGROUP"] = function(msg)
         else
             LogFilterGroup.debugMode = false
             print("LogFilterGroup: Debug mode OFF")
+        end
+    elseif msg == "status" then
+        -- Show current status
+        print("LogFilterGroup Status:")
+        print("  In Tiny Mode: " .. tostring(LogFilterGroup.inTinyMode))
+        print("  Sound Enabled: " .. tostring(LogFilterGroup.soundEnabled))
+        print("  Active Tab: " .. tostring(LogFilterGroup.activeTabId))
+        local tab = LogFilterGroup:GetTab(LogFilterGroup.activeTabId)
+        if tab then
+            print("  Tab Name: " .. tostring(tab.name))
+            print("  Tab Muted: " .. tostring(tab.muted))
+            print("  Tab showInTinyMode: " .. tostring(tab.showInTinyMode))
         end
     elseif msg == "resetui" then
         -- Force recreate UI frames
